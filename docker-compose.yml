@@ -1,0 +1,80 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: rss_hub_reader
+      POSTGRES_USER: rss
+      POSTGRES_PASSWORD: reader
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U rss -d rss_hub_reader"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    environment:
+      DATABASE_URL: postgres://rss:reader@postgres:5432/rss_hub_reader
+      APP_BIND: 0.0.0.0:8080
+      APP_PUBLIC_URL: http://localhost:8080
+      ADMIN_USERNAME: admin
+      ADMIN_PASSWORD: change-me-now
+      COOKIE_SECURE: ${COOKIE_SECURE:-false}
+      INDEX_DIR: /app/data/tantivy
+      FETCH_CONCURRENCY: ${FETCH_CONCURRENCY:-16}
+      FETCH_INTERVAL_MINUTES: ${FETCH_INTERVAL_MINUTES:-30}
+      FEED_MAX_BYTES: ${FEED_MAX_BYTES:-5242880}
+      ARTICLE_MAX_BYTES: ${ARTICLE_MAX_BYTES:-8388608}
+      ALLOW_PRIVATE_FETCH: ${ALLOW_PRIVATE_FETCH:-false}
+      LLM_BASE_URL: ${LLM_BASE_URL:-https://api.openai.com/v1}
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      LLM_MODEL: ${LLM_MODEL:-gpt-5.6-luna}
+      LLM_TIMEOUT_SECONDS: ${LLM_TIMEOUT_SECONDS:-45}
+      LLM_MAX_CONCURRENCY: ${LLM_MAX_CONCURRENCY:-2}
+      LLM_MAX_OUTPUT_TOKENS: ${LLM_MAX_OUTPUT_TOKENS:-4096}
+      LLM_CONTEXT_BUDGET_CHARS: ${LLM_CONTEXT_BUDGET_CHARS:-64000}
+      EVENT_AGENT_ENABLED: ${EVENT_AGENT_ENABLED:-false}
+      EVENT_AGENT_INTERVAL_SECONDS: ${EVENT_AGENT_INTERVAL_SECONDS:-30}
+      EVENT_AGENT_LOOKBACK_HOURS: ${EVENT_AGENT_LOOKBACK_HOURS:-24}
+      EVENT_AGENT_MAX_PENDING: ${EVENT_AGENT_MAX_PENDING:-12}
+      EVENT_AGENT_UPDATE_DEBOUNCE_SECONDS: ${EVENT_AGENT_UPDATE_DEBOUNCE_SECONDS:-1800}
+      TRANSLATION_BASE_URL: ${TRANSLATION_BASE_URL:-https://api.openai.com/v1}
+      TRANSLATION_API_KEY: ${TRANSLATION_API_KEY:-}
+      TRANSLATION_MODEL: ${TRANSLATION_MODEL:-gpt-5.6-luna}
+      TRANSLATION_TIMEOUT_SECONDS: ${TRANSLATION_TIMEOUT_SECONDS:-60}
+      TRANSLATION_MAX_CONCURRENCY: ${TRANSLATION_MAX_CONCURRENCY:-2}
+      TRANSLATION_MAX_INPUT_CHARS: ${TRANSLATION_MAX_INPUT_CHARS:-60000}
+      TRANSLATION_CHUNK_CHARS: ${TRANSLATION_CHUNK_CHARS:-6000}
+      TRANSLATION_MAX_OUTPUT_TOKENS: ${TRANSLATION_MAX_OUTPUT_TOKENS:-8192}
+      TELEGRAM_API_BASE: ${TELEGRAM_API_BASE:-https://api.telegram.org}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
+      ARTICLE_FETCH_COOKIES_JSON: '${ARTICLE_FETCH_COOKIES_JSON:-{}}'
+      OPENCLI_BIN: ${OPENCLI_BIN:-opencli}
+      OPENCLI_FEEDS_JSON: '${OPENCLI_FEEDS_JSON:-{}}'
+      OPENCLI_ACCESS_TOKEN: ${OPENCLI_ACCESS_TOKEN:-}
+      OPENCLI_MAX_CONCURRENCY: ${OPENCLI_MAX_CONCURRENCY:-1}
+      RSSHUB_BASE_URL: ${RSSHUB_BASE_URL:-}
+      WEB_WATCHES_JSON: '${WEB_WATCHES_JSON:-{}}'
+      WEBSUB_ENABLED: ${WEBSUB_ENABLED:-false}
+      WEBSUB_LEASE_SECONDS: ${WEBSUB_LEASE_SECONDS:-604800}
+      BROWSER_FETCH_ENABLED: ${BROWSER_FETCH_ENABLED:-false}
+      BROWSER_FETCH_BIN: ${BROWSER_FETCH_BIN:-chromium}
+      BROWSER_FETCH_USER_DATA_DIR: ${BROWSER_FETCH_USER_DATA_DIR:-}
+    ports:
+      - "127.0.0.1:8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - index-data:/app/data
+
+volumes:
+  postgres-data:
+  index-data:

@@ -1,0 +1,22 @@
+[Unit]
+Description=RSS Hub Reader authenticated X browser
+After=network-online.target rss-opencli-daemon.service rss-x-display.service
+Requires=rss-opencli-daemon.service rss-x-display.service
+
+[Service]
+Type=simple
+User=rss-x
+Group=rss-x
+Environment=HOME=/opt/rss-x-runtime
+Environment=DISPLAY=:99
+WorkingDirectory=/opt/rss-x-runtime
+ExecStart=/usr/bin/chromium --disable-dev-shm-usage --no-first-run --no-default-browser-check --disable-extensions-except=/opt/rss-x-runtime/opencli-extension --load-extension=/opt/rss-x-runtime/opencli-extension --user-data-dir=/opt/rss-x-runtime/chrome-profile --remote-debugging-address=127.0.0.1 --remote-debugging-port=19222 https://x.com/home
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/opt/rss-x-runtime
+
+[Install]
+WantedBy=multi-user.target

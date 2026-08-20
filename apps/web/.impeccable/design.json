@@ -1,0 +1,158 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-07-13T19:48:57Z",
+  "title": "Design System: RSS Hub Reader",
+  "extensions": {
+    "colorMeta": {
+      "graphite-canvas": {
+        "role": "neutral",
+        "displayName": "Graphite Canvas",
+        "canonical": "oklch(0.94 0.006 250)",
+        "tonalRamp": ["oklch(0.15 0.006 250)", "oklch(0.25 0.006 250)", "oklch(0.36 0.006 250)", "oklch(0.48 0.006 250)", "oklch(0.60 0.006 250)", "oklch(0.72 0.006 250)", "oklch(0.84 0.006 250)", "oklch(0.95 0.006 250)"]
+      },
+      "signal-surface": {
+        "role": "neutral",
+        "displayName": "Signal Surface",
+        "canonical": "oklch(0.995 0.002 250 / 0.86)",
+        "tonalRamp": ["oklch(0.15 0.002 250)", "oklch(0.27 0.002 250)", "oklch(0.39 0.002 250)", "oklch(0.51 0.002 250)", "oklch(0.63 0.002 250)", "oklch(0.75 0.002 250)", "oklch(0.87 0.002 250)", "oklch(0.95 0.002 250)"]
+      },
+      "signal-ink": {
+        "role": "primary",
+        "displayName": "Signal Ink",
+        "canonical": "oklch(0.18 0.006 250)",
+        "tonalRamp": ["oklch(0.15 0.006 250)", "oklch(0.25 0.006 250)", "oklch(0.36 0.006 250)", "oklch(0.48 0.006 250)", "oklch(0.60 0.006 250)", "oklch(0.72 0.006 250)", "oklch(0.84 0.006 250)", "oklch(0.95 0.006 250)"]
+      },
+      "correction-red": {
+        "role": "tertiary",
+        "displayName": "Correction Red",
+        "canonical": "oklch(0.47 0.12 26)",
+        "tonalRamp": ["oklch(0.15 0.12 26)", "oklch(0.25 0.12 26)", "oklch(0.36 0.12 26)", "oklch(0.47 0.12 26)", "oklch(0.58 0.12 26)", "oklch(0.70 0.12 26)", "oklch(0.82 0.12 26)", "oklch(0.94 0.12 26)"]
+      }
+    },
+    "typographyMeta": {
+      "display": { "displayName": "Signal Display", "purpose": "One page-level statement per primary view." },
+      "headline": { "displayName": "Inspector Headline", "purpose": "Event detail and major section headings." },
+      "title": { "displayName": "Event Title", "purpose": "The core claim inside each event card." },
+      "body": { "displayName": "Evidence Body", "purpose": "Summaries, changes, evidence, and unknowns." },
+      "label": { "displayName": "Operational Label", "purpose": "Time budgets, metadata, states, and compact actions." }
+    },
+    "shadows": [
+      { "name": "panel-float", "value": "0 24px 80px oklch(0.2 0.012 250 / 0.13), inset 0 1px 0 var(--glass-edge), inset 0 0 0 1px var(--glass-line)", "purpose": "Sticky or floating panels that truly overlap document content." },
+      { "name": "row-lift", "value": "0 10px 28px oklch(0.2 0.012 250 / 0.1), inset 0 1px 0 var(--glass-edge)", "purpose": "Transient hover or elevated single-row feedback." },
+      { "name": "inset-boundary", "value": "inset 0 0 0 1px var(--line-soft)", "purpose": "Default structural boundary for cards and controls." }
+    ],
+    "motion": [
+      { "name": "fast", "value": "120ms", "purpose": "Press, hover, and direct state feedback." },
+      { "name": "base", "value": "180ms", "purpose": "Surface and color transitions." },
+      { "name": "ease-out", "value": "cubic-bezier(0.22, 1, 0.36, 1)", "purpose": "All non-linear interface transitions." }
+    ],
+    "breakpoints": [
+      { "name": "compact", "value": "350px" },
+      { "name": "mobile", "value": "760px" },
+      { "name": "workspace", "value": "1050px" }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "The single highest-priority action in a local decision area.",
+      "html": "<button class=\"ds-btn-primary\">进入证据库</button>",
+      "css": ".ds-btn-primary { min-height: 44px; padding: 0 15px; border: 0; border-radius: 10px; background: var(--accent); color: var(--accent-on); font: 750 12px/1.2 \"Avenir Next\", \"PingFang SC\", system-ui, sans-serif; cursor: pointer; transition: opacity var(--motion-fast) var(--ease-out), transform var(--motion-fast) var(--ease-out); } .ds-btn-primary:hover { opacity: .88; } .ds-btn-primary:active { transform: scale(.985); } .ds-btn-primary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }"
+    },
+    {
+      "name": "Quiet Button",
+      "kind": "button",
+      "refersTo": "button-quiet",
+      "description": "A secondary operation that remains available without competing with the primary action.",
+      "html": "<button class=\"ds-btn-quiet\">刷新</button>",
+      "css": ".ds-btn-quiet { min-height: 44px; padding: 0 11px; border: 0; border-radius: 10px; background: var(--surface-bg); color: var(--text-muted); box-shadow: inset 0 0 0 1px var(--line-soft); font: 750 12px/1.2 \"Avenir Next\", \"PingFang SC\", system-ui, sans-serif; cursor: pointer; transition: background var(--motion-base) var(--ease-out), color var(--motion-base) var(--ease-out); } .ds-btn-quiet:hover { background: var(--surface-muted); color: var(--text-strong); } .ds-btn-quiet:active { transform: scale(.985); } .ds-btn-quiet:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }"
+    },
+    {
+      "name": "Time Budget Segment",
+      "kind": "nav",
+      "refersTo": "button-primary",
+      "description": "A compact selector that makes the brief's finite attention budget explicit.",
+      "html": "<div class=\"ds-segment\"><button class=\"ds-segment-active\">3 分钟</button><button>10 分钟</button><button>20 分钟</button></div>",
+      "css": ".ds-segment { display: inline-flex; padding: 4px; border-radius: 13px; background: var(--surface-muted); box-shadow: inset 0 0 0 1px var(--line-soft); } .ds-segment button { min-height: 44px; padding: 0 11px; border: 0; border-radius: 10px; background: transparent; color: var(--text-muted); font: 750 12px/1.2 \"Avenir Next\", \"PingFang SC\", system-ui, sans-serif; cursor: pointer; } .ds-segment button:hover { color: var(--text-strong); } .ds-segment .ds-segment-active { background: var(--accent); color: var(--accent-on); } .ds-segment button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }"
+    },
+    {
+      "name": "Evidence Question Field",
+      "kind": "input",
+      "refersTo": "button-primary",
+      "description": "The prominent route from a brief into cited evidence and follow-up questions.",
+      "html": "<form class=\"ds-question\"><input aria-label=\"提问\" placeholder=\"基于已采集证据提问…\"><button>进入证据库</button></form>",
+      "css": ".ds-question { min-height: 58px; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 12px; padding: 8px; border-radius: 14px; background: var(--surface-bg); box-shadow: inset 0 0 0 1px var(--line-strong); } .ds-question input { min-width: 0; height: 42px; padding: 0 10px; border: 0; outline: 0; background: transparent; color: var(--text-strong); font: 400 14px/1.65 \"Avenir Next\", \"PingFang SC\", system-ui, sans-serif; } .ds-question button { height: 44px; padding: 0 15px; border: 0; border-radius: 12px; background: var(--accent); color: var(--accent-on); font-weight: 750; cursor: pointer; } .ds-question:focus-within { box-shadow: inset 0 0 0 1px var(--accent), 0 0 0 4px var(--focus); } .ds-question button:hover { opacity: .88; } .ds-question button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }"
+    },
+    {
+      "name": "Revision Badge",
+      "kind": "chip",
+      "refersTo": "revision-badge",
+      "description": "A semantic label for an event's newest meaningful change.",
+      "html": "<span class=\"ds-revision\">更新</span>",
+      "css": ".ds-revision { min-height: 24px; display: inline-flex; align-items: center; justify-content: center; padding: 0 8px; border-radius: 999px; background: var(--info-soft); color: var(--text-strong); font: 850 12px/1.2 \"Avenir Next\", \"PingFang SC\", system-ui, sans-serif; }"
+    },
+    {
+      "name": "Event Card",
+      "kind": "card",
+      "refersTo": "event-card",
+      "description": "The signature unit that prioritizes an event claim, its change, and its evidence status.",
+      "html": "<button class=\"ds-event-card\"><span class=\"ds-event-index\">01</span><span class=\"ds-event-copy\"><small>更新 · 3 个独立来源</small><strong>事件级核心结论放在这里</strong><span>相比上次新增了可核验的关键变化。</span></span><span aria-hidden=\"true\">→</span></button>",
+      "css": ".ds-event-card { width: 100%; display: grid; grid-template-columns: 34px minmax(0, 1fr) 20px; align-items: start; gap: 13px; padding: 18px 16px; border: 0; border-radius: 14px; background: var(--surface-bg); color: var(--text); box-shadow: inset 0 0 0 1px var(--line-soft); text-align: left; cursor: pointer; transition: background var(--motion-fast) var(--ease-out), transform var(--motion-fast) var(--ease-out), box-shadow var(--motion-fast) var(--ease-out); } .ds-event-index, .ds-event-copy small { color: var(--text-soft); font-size: 12px; } .ds-event-copy { display: grid; gap: 9px; } .ds-event-copy strong { color: var(--text-strong); font-size: 20px; line-height: 1.27; letter-spacing: -.025em; } .ds-event-copy > span { color: var(--text-muted); font-size: 14px; line-height: 1.65; } .ds-event-card:hover { background: var(--item-active); box-shadow: inset 0 0 0 1px var(--accent-border); transform: translateY(-1px); } .ds-event-card:active { transform: scale(.995); } .ds-event-card:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }"
+    },
+    {
+      "name": "Brief Workflow",
+      "kind": "custom",
+      "refersTo": "button-quiet",
+      "description": "A finite progress and state switcher for pending, saved, completed, and all brief events.",
+      "html": "<section class=\"ds-workflow\"><div class=\"ds-workflow-progress\"><strong>已处理 4/12</strong><span><i style=\"width:33%\"></i></span></div><nav aria-label=\"简报状态筛选\"><button class=\"ds-workflow-active\">待处理 8</button><button>稍后 2</button><button>已完成 2</button><button>全部 12</button></nav></section>",
+      "css": ".ds-workflow { display: flex; align-items: center; justify-content: space-between; gap: 18px; padding: 12px 14px; border-radius: 14px; background: var(--surface-bg); box-shadow: inset 0 0 0 1px var(--line-soft); color: var(--text); font-family: \"Avenir Next\", \"PingFang SC\", system-ui, sans-serif; } .ds-workflow-progress { min-width: 180px; display: grid; gap: 7px; } .ds-workflow-progress strong { color: var(--text-strong); font-size: 13px; } .ds-workflow-progress > span { height: 6px; overflow: hidden; border-radius: 999px; background: var(--surface-muted); } .ds-workflow-progress i { display: block; height: 100%; border-radius: inherit; background: var(--accent); } .ds-workflow nav { display: inline-flex; gap: 2px; padding: 4px; border-radius: 13px; background: var(--surface-muted); } .ds-workflow button { min-height: 44px; padding: 0 10px; border: 0; border-radius: 10px; background: transparent; color: var(--text-muted); font-weight: 750; cursor: pointer; } .ds-workflow button:hover { background: var(--surface-bg); color: var(--text-strong); } .ds-workflow .ds-workflow-active { background: var(--accent); color: var(--accent-on); } .ds-workflow button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }"
+    },
+    {
+      "name": "Primary Navigation",
+      "kind": "nav",
+      "refersTo": "button-quiet",
+      "description": "Four stable product destinations with a clear current-page state.",
+      "html": "<nav class=\"ds-nav\" aria-label=\"主要导航\"><button class=\"ds-nav-active\">现在</button><button>快讯</button><button>关注</button><button>资料</button></nav>",
+      "css": ".ds-nav { display: inline-flex; align-items: center; gap: 4px; } .ds-nav button { min-height: 44px; padding: 0 13px; border: 0; border-radius: 10px; background: transparent; color: var(--text-muted); font: 700 13px/1.2 \"Avenir Next\", \"PingFang SC\", system-ui, sans-serif; cursor: pointer; } .ds-nav button:hover { background: var(--surface-muted); color: var(--text-strong); } .ds-nav .ds-nav-active { background: var(--accent-soft); color: var(--accent-strong); box-shadow: inset 0 0 0 1px var(--accent-border); } .ds-nav button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "信号台",
+    "overview": "这个系统像一座纪律严明的信号台：持续接收噪声，但只把经过排序、聚合和核验的变化送到用户面前。它冷静、可信、敏锐，信息密度高却不制造压迫感；每个层级都帮助用户更快完成判断，而不是延长停留时间。界面采用 Linear 式的克制和清晰，但不复制其品牌装饰。结构由大面积石墨中性色、精确排版、有限状态色和可完成的事件列表构成。它明确拒绝 PRODUCT.md 中的“新闻门户式的信息轰炸和无限瀑布流”。",
+    "keyCharacteristics": [
+      "有限、可完成的事件简报，而非无尽内容流。",
+      "事件、变化和证据状态始终先于来源文章。",
+      "高密度建立在强层级、稳定间距和清晰状态之上。",
+      "默认安静；只有确认、纠正、争议和焦点状态获得视觉强调。",
+      "桌面与移动端都保持完整键盘、对比度和触控可达性。"
+    ],
+    "rules": [
+      { "name": "The Signal Desk Rule", "body": "每个屏幕都必须让用户更快辨认真正的新变化；不能帮助判断的信息不应争夺主层级。", "section": "overview" },
+      { "name": "The Graphite Signal Rule", "body": "黑白灰承担结构；状态色必须对应可解释的数据语义，禁止纯装饰性彩色。", "section": "colors" },
+      { "name": "The Rarity Rule", "body": "Signal Ink 在任一视口中只能强调当前最重要的操作或状态，不能同时填满多个区域。", "section": "colors" },
+      { "name": "The Red Means Correction Rule", "body": "红色只表示错误、纠正、否认或争议；禁止用于增长、热点或促销。", "section": "colors" },
+      { "name": "The One Hierarchy Rule", "body": "同一屏幕只允许一个 Display 层级；卡片标题必须服从页面命题。", "section": "typography" },
+      { "name": "The Evidence Legibility Rule", "body": "证据、未知项和分歧不得使用低于 12px 的字号，也不得仅靠低对比度隐藏。", "section": "typography" },
+      { "name": "The Flat-at-Rest Rule", "body": "内容卡在静止状态禁止使用外投影；先用色调和内描边建立边界。", "section": "elevation" },
+      { "name": "The Honest Elevation Rule", "body": "只有真实覆盖其他内容或响应交互的元素可以抬升；阴影不能替代层级设计。", "section": "elevation" },
+      { "name": "The One Decision per Component Rule", "body": "每个控件只承担一个清晰动作；卡片本身负责选择事件，内部不堆叠一排同权按钮。", "section": "components" },
+      { "name": "The Finite Brief Rule", "body": "每份简报必须提供清晰的完成条件；进度只计算完成或明确推迟的事件，不能用滚动深度冒充完成。", "section": "components" }
+    ],
+    "dos": [
+      "Do 把每份简报限制为一个明确的时间预算和有限事件数量。",
+      "Do 使用 44px 最小交互高度、2px 可见焦点轮廓和文字状态标签。",
+      "Do 先展示事件结论、新变化、证据状态和未知项，再提供原始文章入口。",
+      "Do 使用 Signal Surface、Quiet Surface 和 1px Inset Boundary 建立高密度但可扫描的层级。",
+      "Do 在 prefers-reduced-motion 下取消位移、旋转和非必要过渡，同时保留状态变化。"
+    ],
+    "donts": [
+      "Don't 做成“新闻门户式的信息轰炸和无限瀑布流”；任何主视图都必须有可完成的边界。",
+      "Don't 用彩色热点标签、夸张数字、轮播横幅或大面积警示色伪造重要性。",
+      "Don't 让来源文章标题压过事件结论，也不要把文章数量误当作事件重要性。",
+      "Don't 给静态事件卡添加外投影；如果卡片看起来漂浮，层级就已经过度。",
+      "Don't 用颜色单独表达确认、纠正、争议或选中状态；必须同时提供文本或结构差异。"
+    ]
+  }
+}

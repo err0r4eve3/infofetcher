@@ -1,0 +1,19 @@
+[Unit]
+Description=RSS Hub Reader private X display
+After=network-online.target
+
+[Service]
+Type=simple
+User=rss-x
+Group=rss-x
+Environment=HOME=/opt/rss-x-runtime
+ExecStart=/usr/bin/Xvfb :99 -screen 0 1440x900x24 -nolisten tcp -noreset
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/opt/rss-x-runtime
+
+[Install]
+WantedBy=multi-user.target

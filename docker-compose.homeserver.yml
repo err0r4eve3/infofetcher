@@ -1,0 +1,42 @@
+services:
+  rsshub:
+    image: ghcr.io/diygod/rsshub:latest
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+    ports:
+      - "127.0.0.1:${HOST_RSSHUB_PORT:-11200}:1200"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:1200/healthz"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
+
+  postgres:
+    ports: !override
+      - "127.0.0.1:${HOST_PG_PORT:-15432}:5432"
+
+  api:
+    build:
+      dockerfile: apps/api/Dockerfile.homeserver
+    network_mode: host
+    environment:
+      APP_BIND: "127.0.0.1:${HOST_API_PORT:-18181}"
+      DATABASE_URL: "postgres://rss:reader@127.0.0.1:${HOST_PG_PORT:-15432}/rss_hub_reader"
+      APP_PUBLIC_URL: ${APP_PUBLIC_URL:-http://localhost:8080}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?ADMIN_PASSWORD is required}
+      COOKIE_SECURE: ${COOKIE_SECURE:-true}
+      EVENT_AGENT_ENABLED: ${EVENT_AGENT_ENABLED:-true}
+      EVENT_AGENT_INTERVAL_SECONDS: ${EVENT_AGENT_INTERVAL_SECONDS:-30}
+      EVENT_AGENT_LOOKBACK_HOURS: ${EVENT_AGENT_LOOKBACK_HOURS:-24}
+      EVENT_AGENT_MAX_PENDING: ${EVENT_AGENT_MAX_PENDING:-12}
+      WEBSUB_ENABLED: ${WEBSUB_ENABLED:-true}
+      RSSHUB_BASE_URL: "http://127.0.0.1:${HOST_RSSHUB_PORT:-11200}"
+      OPENCLI_TIMEOUT_SECONDS: ${OPENCLI_TIMEOUT_SECONDS:-90}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rsshub:
+        condition: service_healthy
+    ports: !reset []

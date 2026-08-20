@@ -1,0 +1,22 @@
+[Unit]
+Description=RSS Hub Reader OpenCLI browser bridge daemon
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=rss-x
+Group=rss-x
+Environment=HOME=/opt/rss-x-runtime
+Environment=PATH=/opt/rss-x-runtime/opencli/bin:/usr/bin:/bin
+WorkingDirectory=/opt/rss-x-runtime
+ExecStart=/usr/bin/node /opt/rss-x-runtime/opencli/lib/node_modules/@jackwener/opencli/dist/src/daemon.js
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/opt/rss-x-runtime
+
+[Install]
+WantedBy=multi-user.target

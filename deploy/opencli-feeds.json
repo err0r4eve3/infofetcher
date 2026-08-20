@@ -1,0 +1,86 @@
+{
+  "x-world-leaders": {
+    "title": "X · 国际政要",
+    "link": "https://x.com/search?q=(from%3APOTUS%20OR%20from%3AWhiteHouse%20OR%20from%3AZelenskyyUa%20OR%20from%3AEmmanuelMacron%20OR%20from%3Anarendramodi%20OR%20from%3Avonderleyen)",
+    "description": "国际政要公开账号",
+    "args": [
+      "twitter",
+      "search",
+      "(from:POTUS OR from:WhiteHouse OR from:ZelenskyyUa OR from:EmmanuelMacron OR from:narendramodi OR from:vonderleyen) -filter:replies -filter:nativeretweets",
+      "--product",
+      "live",
+      "--limit",
+      "40"
+    ]
+  },
+  "x-ai-official": {
+    "title": "X · OpenAI 与 Anthropic",
+    "link": "https://x.com/search?q=(from%3AOpenAI%20OR%20from%3AAnthropicAI%20OR%20from%3Aclaudeai)",
+    "description": "OpenAI、Anthropic 与 Claude 官方账号",
+    "args": [
+      "twitter",
+      "search",
+      "(from:OpenAI OR from:AnthropicAI OR from:claudeai) -filter:replies -filter:nativeretweets",
+      "--product",
+      "live",
+      "--limit",
+      "40"
+    ]
+  },
+  "x-ai-builders": {
+    "title": "X · AI 产品与 Claude Code",
+    "link": "https://x.com/search?q=(from%3Abtibor91%20OR%20from%3Asama%20OR%20from%3Agdb%20OR%20from%3Abcherny)",
+    "description": "Tibor Blaho、OpenAI 与 Claude Code",
+    "args": [
+      "twitter",
+      "search",
+      "(from:btibor91 OR from:sama OR from:gdb OR from:bcherny) -filter:replies -filter:nativeretweets",
+      "--product",
+      "live",
+      "--limit",
+      "40"
+    ]
+  },
+  "x-chinese-ai-commentary": {
+    "title": "X · 中文 AI 实践者",
+    "link": "https://x.com/dotey",
+    "description": "宝玉的 AI 工具、工程实践与产品观察",
+    "args": [
+      "twitter",
+      "search",
+      "from:dotey -filter:replies -filter:nativeretweets",
+      "--product",
+      "live",
+      "--limit",
+      "30"
+    ]
+  },
+  "bilibili-li-mu-ai": {
+    "title": "Bilibili · 跟李沐学AI",
+    "link": "https://space.bilibili.com/1567748478",
+    "description": "李沐的深度学习、大模型与论文讲解",
+    "args": [
+      "bilibili",
+      "user-videos",
+      "1567748478",
+      "--order",
+      "pubdate",
+      "--limit",
+      "20"
+    ]
+  },
+  "bilibili-geekwan": {
+    "title": "Bilibili · 极客湾",
+    "link": "https://space.bilibili.com/25876945",
+    "description": "芯片、硬件与终端性能实测",
+    "args": [
+      "bilibili",
+      "user-videos",
+      "25876945",
+      "--order",
+      "pubdate",
+      "--limit",
+      "20"
+    ]
+  }
+}

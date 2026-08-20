@@ -1,0 +1,25 @@
+[Unit]
+Description=Luna-only CPA gateway with token usage ledger
+After=network-online.target cliproxyapi.service
+Requires=cliproxyapi.service
+
+[Service]
+Type=simple
+User=cliproxy
+Group=cliproxy
+ExecStart=/usr/bin/python3 /usr/local/libexec/luna-cpa-gateway.py --database /var/lib/cliproxyapi/luna-usage.sqlite3
+Restart=on-failure
+RestartSec=3s
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/cliproxyapi
+CapabilityBoundingSet=
+LockPersonality=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,14 @@
+target/
+node_modules/
+dist/
+.env
+.env.local
+.DS_Store
+data/
+coverage/
+*.log
+*.tsbuildinfo
+output/
+.playwright-cli/
+test-results/
+.gstack/

@@ -1,0 +1,14 @@
+.git
+.context
+target
+**/target
+node_modules
+**/node_modules
+dist
+**/dist
+test-results
+.env
+.env.*
+!.env.example
+*.log
+.DS_Store
