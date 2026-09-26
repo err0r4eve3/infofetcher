@@ -13,6 +13,28 @@ The selection pipeline is intentionally split into four stages:
 
 This follows the production pattern described by Reddit and YouTube, where retrieval and filtering happen before ranking and list composition. MMR is used as the first list-level diversity method because it is understandable and works without embeddings or a trained topic ontology.
 
+## Source and synthesis update (2026-09-08)
+
+The preset catalog now starts with primary publications, followed by reporting, specialist analysis, and community feeds. The new `一手发布` group contains:
+
+| Preset | Coverage | Live feed check |
+| --- | --- | --- |
+| [UN News](https://news.un.org/feed/subscribe/en/news/all/rss.xml) | International institutions and humanitarian developments | 30 entries |
+| [Federal Reserve Monetary Policy](https://www.federalreserve.gov/feeds/press_monetary.xml) | Policy announcements and minutes; [official feed directory](https://www.federalreserve.gov/feeds/feeds.htm) | 15 entries |
+| [ECB Press Releases](https://www.ecb.europa.eu/rss/press.html) | Policy statements, speeches and press conferences; [official feed directory](https://www.ecb.europa.eu/home/html/rss.en.html) | 15 entries |
+
+Checks used `rss-hub-reader/0.1` and the project's installed `feed-rs` parser; every included entry had a title, link and publication time. These are optional presets, not automatic subscriptions. The initial quality score is an editorial ranking prior, not proof that an institution's claims are true. CERT-EU was excluded from this update: its RSS was reachable, but the current parser lost publication dates containing `CEST`.
+
+- Article summaries and event digests use the existing publisher identity (site hostname or explicit Hub route), feed, content hash and canonical URL to reject repeated evidence. Tracking parameters do not create another source. Muted sources are excluded from automatic supporting material; an explicitly requested primary article remains usable. Source weights affect supporting-material order, while the requested article or event focus stays first.
+- Report source quality is averaged once per publisher, using that publisher's highest visible adjusted feed score. Repeated articles cannot multiply its weight. Diversity penalties use publisher identity rather than editable feed titles.
+- Local extracts and legacy summaries without a grounding score receive no grounded-summary bonus. During generation, changes to citation title, URL, publisher metadata or body hash invalidate the article-summary snapshot before it is saved.
+
+Deterministic query replay: 13 articles from a publisher scored 50 plus one from a publisher scored 90 previously yielded 53; publisher-balanced scoring yields 70 and remains 70 after adding 20 repeated articles. This is a synthetic regression case, not a production quality measurement. Query checks used an isolated PostgreSQL schema without the unused `pgcrypto`/`pg_trgm` extensions; they do not establish full migration or production performance results.
+
+Validation: 136 Rust tests, Clippy with warnings denied, web typecheck/build, all 60 entries from the three new feeds, and an isolated query replay with 1,201 events / 12,034 visible articles passed. No production subscriptions or model calls were changed by these local checks.
+
+Publisher identity remains a heuristic: separate domains or Hub routes can share ownership or copy the same wire report. URL/content deduplication catches exact copies, not rewritten syndication. The two-stage evidence verifier remains required.
+
 ## Verified Baseline
 
 Read-only production snapshot on 2026-07-14:

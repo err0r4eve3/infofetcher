@@ -182,6 +182,12 @@ export type ArticleTranslation = {
   updated_at: string
 }
 
+export type SelectionTranslation = {
+  translation: string
+  target_language: 'zh-Hans' | 'en'
+  model: string
+}
+
 export type Metrics = {
   public_url: string
   feeds: number
@@ -225,6 +231,7 @@ export type MonitorRequest = {
 
 export type EventBriefItem = {
   event_id: string
+  report_section: 'world' | 'technology' | 'security' | 'business' | 'general'
   revision_type: 'ADD' | 'UPDATE' | 'CORRECT' | 'CONTRADICT' | 'CONFIRM'
   title: string
   what_happened: string
@@ -253,7 +260,8 @@ export type EventBriefItem = {
 export type NowBrief = {
   generated_at: string
   window_hours: number
-  budget_minutes: number
+  mode: 'report' | 'brief'
+  budget_minutes: number | null
   stats: {
     candidate_events: number
     eligible_events: number

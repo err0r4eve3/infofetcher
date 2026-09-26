@@ -1,15 +1,23 @@
 import {
+  ArrowLeft,
   ArrowRight,
   BellRing,
   Bookmark,
   BookOpen,
   CheckCircle2,
+  ChartNoAxesCombined,
+  ChevronDown,
   Clock3,
   Compass,
+  Cpu,
   Eye,
   FileSearch,
+  Globe2,
+  Inbox,
+  Layers3,
   Library,
   ListChecks,
+  Moon,
   Plus,
   Radio,
   RefreshCw,
@@ -17,14 +25,19 @@ import {
   Settings,
   ShieldCheck,
   Sparkles,
+  Sun,
   Target,
   Trash2,
   TrendingUp,
-  XCircle
+  X,
+  XCircle,
+  type LucideIcon
 } from 'lucide-react'
-import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react'
+import { FormEvent, memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { OsintPanel } from './OsintPanel'
 import {
   api,
+  ApiError,
   EventBriefItem,
   EventDetail,
   formatDate,
@@ -38,6 +51,7 @@ type RadarView = 'now' | 'wire' | 'watches'
 type BriefWorkflow = 'pending' | 'saved' | 'done' | 'all'
 type Theme = 'light' | 'dark'
 type NavigationMode = 'push' | 'replace'
+type ReportSectionKey = EventBriefItem['report_section']
 
 type TimedCacheEntry<T> = {
   value: T
@@ -50,6 +64,13 @@ const briefCache = new Map<string, TimedCacheEntry<NowBrief>>()
 const wireCache = new Map<string, TimedCacheEntry<WireResponse>>()
 const watchesCache = new Map<string, TimedCacheEntry<Watch[]>>()
 const detailCache = new Map<string, TimedCacheEntry<EventDetail>>()
+const REPORT_SECTIONS: Array<{ key: ReportSectionKey; label: string; icon: LucideIcon }> = [
+  { key: 'world', label: '全球与公共事务', icon: Globe2 },
+  { key: 'technology', label: 'AI 与科技', icon: Cpu },
+  { key: 'security', label: '安全与风险', icon: ShieldCheck },
+  { key: 'business', label: '商业与经济', icon: ChartNoAxesCombined },
+  { key: 'general', label: '其他重要变化', icon: Layers3 }
+]
 
 function readTimedCache<T>(cache: Map<string, TimedCacheEntry<T>>, key: string): T | null {
   const entry = cache.get(key)
@@ -104,7 +125,12 @@ function loadSavedEvents(userName: string): EventBriefItem[] {
       typeof item === 'object' && item !== null
       && typeof (item as EventBriefItem).event_id === 'string'
       && typeof (item as EventBriefItem).title === 'string'
-    ))
+    )).map((item) => ({
+      ...item,
+      report_section: REPORT_SECTIONS.some((section) => section.key === item.report_section)
+        ? item.report_section
+        : 'general'
+    }))
   } catch {
     return []
   }
@@ -132,10 +158,10 @@ export function WorldRadar({
 }) {
   const [view, setView] = useState<RadarView>(readRadarView)
   const [workflow, setWorkflow] = useState<BriefWorkflow>('pending')
-  const [minutes, setMinutes] = useState(10)
-  const [hours, setHours] = useState(24)
+  const [reportHours, setReportHours] = useState(12)
+  const [wireHours, setWireHours] = useState(24)
   const [brief, setBrief] = useState<NowBrief | null>(() => (
-    readTimedCache(briefCache, `${userName}:10:24`)
+    readTimedCache(briefCache, `${userName}:report:12`)
   ))
   const [wire, setWire] = useState<WireResponse | null>(() => (
     readTimedCache(wireCache, `${userName}:24`)
@@ -152,13 +178,28 @@ export function WorldRadar({
   const [question, setQuestion] = useState('')
   const [watchName, setWatchName] = useState('')
   const [watchQuery, setWatchQuery] = useState('')
-  const [loading, setLoading] = useState(() => !readTimedCache(briefCache, `${userName}:10:24`))
+  const [loading, setLoading] = useState(() => !readTimedCache(briefCache, `${userName}:report:12`))
   const [wireLoading, setWireLoading] = useState(false)
   const [watchesLoading, setWatchesLoading] = useState(() => !readTimedCache(watchesCache, userName))
   const [detailLoading, setDetailLoading] = useState(false)
+  const [detailError, setDetailError] = useState<string | null>(null)
+  const [detailRetry, setDetailRetry] = useState(0)
   const [saving, setSaving] = useState(false)
   const [notice, setNotice] = useState<string | null>(null)
+  const [briefError, setBriefError] = useState<string | null>(null)
+  const [wireError, setWireError] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [overviewOpen, setOverviewOpen] = useState(false)
+  const overviewRef = useRef<HTMLDivElement>(null)
+  const searchRef = useRef<HTMLInputElement>(null)
+  const briefRequestRef = useRef<AbortController | null>(null)
+  const wireRequestRef = useRef<AbortController | null>(null)
+  const inspectorRef = useRef<HTMLElement>(null)
+  const eventFeedRef = useRef<HTMLElement>(null)
+  const selectedCardRef = useRef<HTMLButtonElement | null>(null)
+  const selectedArticleId = brief?.items.find((item) => item.event_id === selectedEventId)?.representative_article_id
+    ?? savedEvents.find((item) => item.event_id === selectedEventId)?.representative_article_id
+    ?? wire?.items.find((item) => item.event_id === selectedEventId)?.citations.find((citation) => citation.article_id)?.article_id
 
   const loadWatches = useCallback(async (force = false) => {
     const cacheKey = userName
@@ -181,49 +222,66 @@ export function WorldRadar({
   }, [userName])
 
   const loadBrief = useCallback(async (force = false) => {
-    const cacheKey = `${userName}:${minutes}:${hours}`
+    briefRequestRef.current?.abort()
+    const controller = new AbortController()
+    briefRequestRef.current = controller
+    setBriefError(null)
+    const cacheKey = `${userName}:report:${reportHours}`
     const cached = force ? null : readTimedCache(briefCache, cacheKey)
     if (cached) {
       setBrief(cached)
       setLoading(false)
       return
     }
+    setBrief((current) => current?.window_hours === reportHours ? current : null)
     setLoading(true)
     setError(null)
     try {
-      const next = await api<NowBrief>(`/api/v2/brief/now?minutes=${minutes}&hours=${hours}`)
+      const next = await api<NowBrief>(`/api/v2/brief/now?hours=${reportHours}`, { signal: controller.signal })
+      if (controller.signal.aborted) return
       writeTimedCache(briefCache, cacheKey, next)
       setBrief(next)
     } catch (err) {
-      setError(err instanceof Error ? err.message : '简报加载失败')
+      if (controller.signal.aborted) return
+      setBriefError(err instanceof Error ? err.message : '简报加载失败')
     } finally {
-      setLoading(false)
+      if (!controller.signal.aborted) setLoading(false)
     }
-  }, [hours, minutes, userName])
+  }, [reportHours, userName])
 
   const loadWire = useCallback(async (force = false) => {
-    const cacheKey = `${userName}:${hours}`
+    wireRequestRef.current?.abort()
+    const controller = new AbortController()
+    wireRequestRef.current = controller
+    setWireError(null)
+    const cacheKey = `${userName}:${wireHours}`
     const cached = force ? null : readTimedCache(wireCache, cacheKey)
     if (cached) {
       setWire(cached)
       setWireLoading(false)
+      wireRequestRef.current = null
       return
     }
+    setWire((current) => current?.window_hours === wireHours ? current : null)
     setWireLoading(true)
     setError(null)
     try {
-      const next = await api<WireResponse>(`/api/v2/wire/now?hours=${hours}&limit=40`)
+      const next = await api<WireResponse>(`/api/v2/wire/now?hours=${wireHours}&limit=40`, { signal: controller.signal })
+      if (controller.signal.aborted) return
       writeTimedCache(wireCache, cacheKey, next)
       setWire(next)
     } catch (err) {
-      setError(err instanceof Error ? err.message : '快讯加载失败')
+      if (controller.signal.aborted) return
+      setWireError(err instanceof Error ? err.message : '快讯加载失败')
     } finally {
-      setWireLoading(false)
+      if (wireRequestRef.current === controller) wireRequestRef.current = null
+      if (!controller.signal.aborted) setWireLoading(false)
     }
-  }, [hours, userName])
+  }, [userName, wireHours])
 
   useEffect(() => {
     void loadBrief()
+    return () => briefRequestRef.current?.abort()
   }, [loadBrief])
 
   useEffect(() => {
@@ -233,9 +291,20 @@ export function WorldRadar({
 
   useEffect(() => {
     if (view !== 'wire') return
-    void loadWire()
-    const timer = window.setInterval(() => void loadWire(true), 30_000)
-    return () => window.clearInterval(timer)
+    const refresh = (force = false) => {
+      if (document.visibilityState !== 'visible' || wireRequestRef.current) return
+      void loadWire(force)
+    }
+    const onVisibilityChange = () => refresh()
+    refresh()
+    const timer = window.setInterval(() => refresh(true), 30_000)
+    document.addEventListener('visibilitychange', onVisibilityChange)
+    return () => {
+      window.clearInterval(timer)
+      document.removeEventListener('visibilitychange', onVisibilityChange)
+      wireRequestRef.current?.abort()
+      wireRequestRef.current = null
+    }
   }, [loadWire, view])
 
   useEffect(() => {
@@ -250,32 +319,62 @@ export function WorldRadar({
   useEffect(() => {
     if (!selectedEventId) {
       setDetail(null)
+      setDetailError(null)
       return
     }
     const cacheKey = `${userName}:${selectedEventId}`
     const cached = readTimedCache(detailCache, cacheKey)
     if (cached) {
       setDetail(cached)
+      setDetailError(null)
       setDetailLoading(false)
       return
     }
     const controller = new AbortController()
     setDetail(null)
+    setDetailError(null)
     setDetailLoading(true)
-    api<EventDetail>(`/api/v2/events/${selectedEventId}`, { signal: controller.signal })
+    const query = selectedArticleId ? `?representative_article_id=${encodeURIComponent(selectedArticleId)}` : ''
+    api<EventDetail>(`/api/v2/events/${selectedEventId}${query}`, { signal: controller.signal })
       .then((next) => {
-        writeTimedCache(detailCache, cacheKey, next)
+        if (controller.signal.aborted) return
+        const currentId = next.event.event_id
+        writeTimedCache(detailCache, `${userName}:${currentId}`, next)
         setDetail(next)
+        if (currentId !== selectedEventId) {
+          briefCache.delete(`${userName}:report:${reportHours}`)
+          wireCache.delete(`${userName}:${wireHours}`)
+          setSavedEvents((current) => current.map((item) => item.event_id === selectedEventId ? next.event : item))
+          writeRadarLocation(readRadarView(), currentId, 'replace')
+          setSelectedEventId(currentId)
+        }
       })
       .catch((err) => {
-        if (err instanceof DOMException && err.name === 'AbortError') return
-        setError(err instanceof Error ? err.message : '事件详情加载失败')
+        if (controller.signal.aborted) return
+        setDetailError(err instanceof ApiError && err.status === 404
+          ? '事件已合并或过期，请刷新报告。'
+          : err instanceof Error ? err.message : '事件详情加载失败')
       })
       .finally(() => {
         if (!controller.signal.aborted) setDetailLoading(false)
       })
     return () => controller.abort()
-  }, [selectedEventId, userName])
+  }, [detailRetry, reportHours, selectedArticleId, selectedEventId, userName, wireHours])
+
+  useEffect(() => {
+    function focusSearch(event: KeyboardEvent) {
+      if (view !== 'now' || event.isComposing || event.altKey) return
+      const editing = event.target instanceof HTMLElement
+        && (event.target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(event.target.tagName))
+      if (((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k')
+        || (!editing && !event.metaKey && !event.ctrlKey && event.key === '/')) {
+        event.preventDefault()
+        searchRef.current?.focus()
+      }
+    }
+    window.addEventListener('keydown', focusSearch)
+    return () => window.removeEventListener('keydown', focusSearch)
+  }, [view])
 
   const activeWatches = useMemo(() => watches.filter((watch) => watch.enabled), [watches])
   const briefItems = useMemo(() => brief?.items ?? [], [brief])
@@ -306,14 +405,23 @@ export function WorldRadar({
       && !savedEventIds.has(item.event_id)
     ))
   }, [briefItems, savedEventIds, savedEvents, workflow])
+  const visibleReportSections = useMemo(() => {
+    let index = 0
+    return REPORT_SECTIONS.map((section) => ({
+      ...section,
+      items: visibleItems
+        .filter((item) => item.report_section === section.key)
+        .map((item) => ({ item, index: ++index }))
+    })).filter((section) => section.items.length > 0)
+  }, [visibleItems])
 
   useEffect(() => {
     setSelectedEventId((current) => (
       (current && readRadarEventId() === current) || visibleItems.some((item) => item.event_id === current)
         ? current
-        : visibleItems[0]?.event_id ?? null
+        : visibleReportSections[0]?.items[0]?.item.event_id ?? null
     ))
-  }, [visibleItems])
+  }, [visibleItems, visibleReportSections])
 
   useEffect(() => {
     try {
@@ -328,6 +436,24 @@ export function WorldRadar({
     const timer = window.setTimeout(() => setNotice(null), 4_000)
     return () => window.clearTimeout(timer)
   }, [notice])
+
+  useEffect(() => {
+    if (!overviewOpen) return
+    const dismissOutside = (event: Event) => {
+      const overview = overviewRef.current
+      const target = event.target as Node
+      if (!overview || overview.contains(target)) return
+      // Clicking non-focusable panel text can focus its containing <main>.
+      if (event.type === 'focusin' && target.contains(overview)) return
+      setOverviewOpen(false)
+    }
+    document.addEventListener('pointerdown', dismissOutside, { passive: true })
+    document.addEventListener('focusin', dismissOutside)
+    return () => {
+      document.removeEventListener('pointerdown', dismissOutside)
+      document.removeEventListener('focusin', dismissOutside)
+    }
+  }, [overviewOpen])
 
   async function createWatch(event: FormEvent) {
     event.preventDefault()
@@ -453,7 +579,7 @@ export function WorldRadar({
           ...current,
           items: current.items.map((item) => item.event_id === selectedEventId ? { ...item, feedback: kind } : item)
         }
-        writeTimedCache(briefCache, `${userName}:${minutes}:${hours}`, next)
+        writeTimedCache(briefCache, `${userName}:report:${reportHours}`, next)
         return next
       })
       setDetail((current) => {
@@ -508,9 +634,20 @@ export function WorldRadar({
     setView(nextView)
   }
 
-  function selectEvent(eventId: string) {
+  const selectEvent = useCallback((eventId: string, card: HTMLButtonElement) => {
     writeRadarLocation(view, eventId, 'replace')
     setSelectedEventId(eventId)
+    selectedCardRef.current = card
+    if (window.matchMedia('(max-width: 1050px)').matches) {
+      inspectorRef.current?.focus({ preventScroll: true })
+      inspectorRef.current?.scrollIntoView({ block: 'start' })
+    }
+  }, [view])
+
+  function returnToEvents() {
+    const target = selectedCardRef.current?.isConnected ? selectedCardRef.current : eventFeedRef.current
+    target?.focus({ preventScroll: true })
+    target?.scrollIntoView({ block: 'center' })
   }
 
   function openWireEvent(eventId: string) {
@@ -522,11 +659,11 @@ export function WorldRadar({
   return (
     <div className="radar-shell">
       <a className="skip-link" href="#radar-main">跳到简报</a>
-      <header className="radar-topbar">
+      <header className={`radar-topbar${view === 'now' ? ' radar-topbar-now' : ''}`}>
         <div className="radar-topbar-spacer" aria-hidden="true" />
         <nav className="radar-nav" aria-label="主要导航">
-          <button type="button" className={view === 'now' ? 'active' : ''} aria-label="现在" aria-current={view === 'now' ? 'page' : undefined} onClick={() => navigateRadar('now')}>
-            <Compass size={16} /><span>现在</span>
+          <button type="button" className={view === 'now' ? 'active' : ''} aria-label="报告" aria-current={view === 'now' ? 'page' : undefined} onClick={() => navigateRadar('now')}>
+            <Compass size={16} /><span>报告</span>
           </button>
           <button type="button" className={view === 'wire' ? 'active' : ''} aria-label="快讯" aria-current={view === 'wire' ? 'page' : undefined} onClick={() => navigateRadar('wire')}>
             <Radio size={16} /><span>快讯</span>
@@ -541,11 +678,34 @@ export function WorldRadar({
           </button>
         </nav>
         <div className="radar-top-actions">
-          <button type="button" className="theme-toggle" onClick={onToggleTheme} aria-label={`切换到${theme === 'dark' ? '浅色' : '深色'}主题`}>
-            {theme === 'dark' ? '浅色' : '深色'}
+          {view === 'now' && (
+            <>
+              <form className="radar-top-search" role="search" onSubmit={submitQuestion}>
+                <Search size={16} />
+                <input
+                  ref={searchRef}
+                  type="search"
+                  enterKeyHint="search"
+                  autoComplete="off"
+                  aria-keyshortcuts="Control+k Meta+k /"
+                  onKeyDown={(event) => { if (event.key === 'Escape') setQuestion('') }}
+                  value={question}
+                  onChange={(event) => setQuestion(event.target.value)}
+                  placeholder="搜索证据或问题"
+                  aria-label="搜索证据或提问"
+                />
+                {question ? (
+                  <button type="button" aria-label="清除搜索" onClick={() => { setQuestion(''); searchRef.current?.focus() }}><X size={15} /></button>
+                ) : <kbd className="search-shortcut" aria-hidden="true">/</kbd>}
+                <button type="submit" aria-label="搜索" disabled={!question.trim()}><ArrowRight size={15} /></button>
+              </form>
+            </>
+          )}
+          <button type="button" className="theme-toggle radar-theme-action" onClick={onToggleTheme} title={`切换到${theme === 'dark' ? '浅色' : '深色'}主题`} aria-label={`切换到${theme === 'dark' ? '浅色' : '深色'}主题`}>
+            {theme === 'dark' ? <Sun size={19} aria-hidden="true" /> : <Moon size={19} aria-hidden="true" />}
           </button>
-          <button type="button" className="theme-toggle" onClick={onOpenSettings} aria-label="打开管理设置">
-            <Settings size={16} />
+          <button type="button" className="theme-toggle radar-settings-action" onClick={onOpenSettings} title="设置" aria-label="打开管理设置">
+            <Settings size={19} aria-hidden="true" />
           </button>
         </div>
       </header>
@@ -559,73 +719,83 @@ export function WorldRadar({
 
       {view === 'now' ? (
         <main id="radar-main" className="radar-main" tabIndex={-1}>
-          <section className="radar-overview">
-            <div>
-              <p className="radar-context"><span aria-hidden="true" />{hours <= 24 ? `过去 ${hours} 小时` : `过去 ${Math.round(hours / 24)} 天`}</p>
-              <h1>真正发生了什么</h1>
-            </div>
-            <div className="radar-controls">
-              <div className="radar-segment" aria-label="阅读时间预算">
-                {[3, 10, 20].map((value) => (
-                  <button type="button" key={value} className={minutes === value ? 'active' : ''} aria-pressed={minutes === value} onClick={() => setMinutes(value)}>
-                    {value} 分钟
-                  </button>
-                ))}
-              </div>
-              <div className="radar-segment" aria-label="信息时间范围">
-                {[12, 24, 72].map((value) => (
-                  <button type="button" key={value} className={hours === value ? 'active' : ''} aria-pressed={hours === value} onClick={() => setHours(value)}>
-                    {value < 24 ? `${value}h` : `${value / 24}d`}
-                  </button>
-                ))}
-              </div>
-              <button type="button" className="radar-refresh" onClick={() => void loadBrief(true)} disabled={loading}>
-                <RefreshCw size={16} className={loading ? 'spin' : ''} />刷新
+          <section className="report-heading" aria-labelledby="report-title">
+            <h1 id="report-title" className="visually-hidden">近 {reportHours} 小时</h1>
+            <label className="report-period">
+              <Clock3 size={17} aria-hidden="true" />
+              <select aria-label="报告覆盖范围" value={reportHours} onChange={(event) => setReportHours(Number(event.target.value))}>
+                <option value={12}>近 12 小时</option>
+                <option value={24}>近 24 小时</option>
+              </select>
+              <ChevronDown size={14} aria-hidden="true" />
+            </label>
+            <div className="report-heading-actions">
+              {brief && (
+                <time dateTime={brief.generated_at} title={`${formatDate(brief.generated_at)} 生成`} aria-label={`${formatDate(brief.generated_at)} 生成`}>
+                  {new Date(brief.generated_at).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}
+                </time>
+              )}
+              <button type="button" className="report-icon-button" onClick={() => void loadBrief(true)} disabled={loading} title="刷新报告" aria-label="刷新全面报告">
+                <RefreshCw size={18} className={loading ? 'spin' : ''} aria-hidden="true" />
               </button>
+              {brief && (
+                <div
+                  ref={overviewRef}
+                  className="report-overview"
+                  onKeyDown={(event) => {
+                    if (event.key !== 'Escape') return
+                    setOverviewOpen(false)
+                    event.currentTarget.querySelector('button')?.focus()
+                  }}
+                >
+                  <button type="button" className="report-icon-button" title="报告概览" aria-label="报告概览" aria-expanded={overviewOpen} aria-controls="report-overview-panel" onClick={() => setOverviewOpen((open) => !open)}>
+                    <ChartNoAxesCombined size={19} aria-hidden="true" />
+                  </button>
+                  {overviewOpen && <div id="report-overview-panel" className="report-overview-panel">
+                    <h2>报告概览</h2>
+                    <dl className="report-statistics">
+                      <div><dt>事件</dt><dd>{brief.stats.selected_events}</dd></div>
+                      <div><dt>通过筛选</dt><dd>{brief.stats.eligible_events} / {brief.stats.candidate_events}</dd></div>
+                      <div><dt>独立来源</dt><dd>{brief.stats.independent_sources}</dd></div>
+                      <div><dt>命中关注</dt><dd>{brief.stats.watch_matches}</dd></div>
+                    </dl>
+                    <div className="report-progress-caption">
+                      <strong>已处理 {processedCount}/{briefItems.length}</strong>
+                      <span>完成 {completedCount} · 排除 {dismissedCount}</span>
+                    </div>
+                    <div className="brief-progress-track" role="progressbar" aria-label="简报处理进度" aria-valuemin={0} aria-valuemax={100} aria-valuenow={completionPercent}>
+                      <span style={{ transform: `scaleX(${completionPercent / 100})` }} />
+                    </div>
+                    {visibleReportSections.length > 1 && (
+                      <nav className="report-directory" aria-label="报告主题目录">
+                        {visibleReportSections.map((section) => (
+                          <a key={section.key} href={`#report-section-${section.key}`} onClick={(event) => {
+                            setOverviewOpen(false)
+                            document.getElementById(`report-section-${section.key}`)?.focus({ preventScroll: true })
+                          }}>
+                            <section.icon size={16} aria-hidden="true" />{section.label}<span>{section.items.length}</span>
+                          </a>
+                        ))}
+                      </nav>
+                    )}
+                    <time className="report-generated-at" dateTime={brief.generated_at}>{formatDate(brief.generated_at)} 生成</time>
+                  </div>}
+                </div>
+              )}
             </div>
           </section>
 
-          <form className="radar-question" onSubmit={submitQuestion}>
-            <Search size={18} />
-            <input
-              value={question}
-              onChange={(event) => setQuestion(event.target.value)}
-              placeholder="搜索证据或问题"
-              aria-label="搜索证据或提问"
-            />
-            <button type="submit">搜索 <ArrowRight size={16} /></button>
-          </form>
-
           {brief && (
-            <div className="radar-metrics" aria-label="简报统计">
-              <span><strong>{brief.stats.selected_events}</strong> 事件</span>
-              <span><strong>{brief.stats.eligible_events}</strong> / {brief.stats.candidate_events} 通过</span>
-              <span><strong>{brief.stats.independent_sources}</strong> 来源</span>
-              <span><strong>{brief.stats.watch_matches}</strong> 关注</span>
-            </div>
-          )}
-
-          {brief && (
-            <section className="brief-workflow" aria-label="简报处理进度">
-              <div className="brief-progress-copy">
-                <span className="brief-progress-icon" aria-hidden="true"><ListChecks size={18} /></span>
-                <div>
-                  <strong>{processedCount === briefItems.length && briefItems.length > 0 ? '已处理完成' : `已处理 ${processedCount}/${briefItems.length}`}</strong>
-                  <span>完成 {completedCount} · 排除 {dismissedCount} · 稍后 {savedEvents.length}</span>
-                </div>
-                <div className="brief-progress-track" role="progressbar" aria-label="简报处理进度" aria-valuemin={0} aria-valuemax={100} aria-valuenow={completionPercent}>
-                  <span style={{ transform: `scaleX(${completionPercent / 100})` }} />
-                </div>
-              </div>
-              <div className="brief-workflow-tabs" aria-label="简报状态筛选">
+            <section className="brief-workflow" aria-label="报告筛选">
+              <div className="brief-workflow-tabs" aria-label="报告状态筛选">
                 {([
-                  ['pending', '待处理', Math.max(0, briefItems.length - processedCount)],
-                  ['saved', '稍后', savedEvents.length],
-                  ['done', '已完成', completedCount],
-                  ['all', '全部', briefItems.length]
-                ] as const).map(([value, label, count]) => (
-                  <button type="button" key={value} className={workflow === value ? 'active' : ''} aria-pressed={workflow === value} onClick={() => setWorkflow(value)}>
-                    {label}<b>{count}</b>
+                  ['pending', '待处理', Math.max(0, briefItems.length - processedCount), Inbox],
+                  ['saved', '稍后', savedEvents.length, Bookmark],
+                  ['done', '完成', completedCount, CheckCircle2],
+                  ['all', '全部', briefItems.length, Layers3]
+                ] as const).map(([value, label, count, Icon]) => (
+                  <button type="button" key={value} className={workflow === value ? 'active' : ''} aria-label={`${label} ${count} 项`} aria-pressed={workflow === value} onClick={() => setWorkflow(value)}>
+                    <Icon size={16} aria-hidden="true" /><span>{label}</span>{workflow === value && <b aria-hidden="true">{count}</b>}
                   </button>
                 ))}
               </div>
@@ -633,26 +803,45 @@ export function WorldRadar({
           )}
 
           <div className="radar-workspace">
-            <section className="event-feed" aria-label="事件简报" aria-busy={loading}>
+            <section ref={eventFeedRef} className="event-feed" aria-label="全面事件报告" aria-busy={loading} tabIndex={-1}>
+              {briefError && <LoadError message={briefError} onRetry={() => void loadBrief(true)} busy={loading} />}
               {loading && !brief ? (
-                <RadarSkeleton label="正在更新" />
+                <RadarSkeleton label="正在生成全面报告" />
               ) : visibleItems.length ? (
-                visibleItems.map((item, index) => (
-                  <EventCard
-                    key={item.event_id}
-                    item={item}
-                    index={index + 1}
-                    active={selectedEventId === item.event_id}
-                    saved={savedEventIds.has(item.event_id)}
-                    onSelect={() => selectEvent(item.event_id)}
-                  />
-                ))
+                <div className="report-sections">
+                  {visibleReportSections.map((section) => (
+                    <section className="report-section" key={section.key} aria-labelledby={`report-section-${section.key}`}>
+                      <header>
+                        <div>
+                          <section.icon size={18} aria-hidden="true" />
+                          <h2 id={`report-section-${section.key}`} tabIndex={-1}>{section.label}</h2>
+                        </div>
+                        <span>{section.items.length} 项</span>
+                      </header>
+                      <div>
+                        {section.items.map(({ item, index }) => (
+                          <EventCard
+                            key={item.event_id}
+                            item={item}
+                            index={index}
+                            active={selectedEventId === item.event_id}
+                            saved={savedEventIds.has(item.event_id)}
+                            onSelect={selectEvent}
+                          />
+                        ))}
+                      </div>
+                    </section>
+                  ))}
+                </div>
               ) : (
-                <BriefWorkflowEmpty workflow={workflow} hasBriefItems={briefItems.length > 0} />
+                !briefError && <BriefWorkflowEmpty workflow={workflow} hasBriefItems={briefItems.length > 0} />
               )}
             </section>
 
-            <aside className="event-inspector" aria-label="事件详情">
+            <aside ref={inspectorRef} className="event-inspector" aria-label="事件详情" aria-busy={detailLoading} tabIndex={-1}>
+              <button type="button" className="inspector-back" onClick={returnToEvents}>
+                <ArrowLeft size={16} />返回事件列表
+              </button>
               {detailLoading && !detail ? (
                 <RadarSkeleton compact label="正在读取事件时间线" />
               ) : detail ? (
@@ -667,6 +856,18 @@ export function WorldRadar({
                   onToggleSaved={() => toggleSavedEvent(detail.event)}
                   onTrack={() => trackEvent(detail.event)}
                 />
+              ) : detailError ? (
+                <div className="radar-empty" role="alert">
+                  <Eye /><p>{detailError}</p>
+                  <button type="button" className="radar-refresh" onClick={() => { setDetailRetry((value) => value + 1); void loadBrief(true) }}>
+                    <RefreshCw size={16} />刷新报告
+                  </button>
+                  {savedEventIds.has(selectedEventId ?? '') && <button type="button" className="radar-refresh" onClick={() => {
+                    setSavedEvents((current) => current.filter((item) => item.event_id !== selectedEventId))
+                    writeRadarLocation(readRadarView(), null, 'replace')
+                    setSelectedEventId(null)
+                  }}>移出稍后</button>}
+                </div>
               ) : (
                 <div className="radar-empty"><Eye />选择事件查看详情</div>
               )}
@@ -683,7 +884,7 @@ export function WorldRadar({
             <div className="radar-controls">
               <div className="radar-segment" aria-label="快讯时间范围">
                 {[12, 24, 72].map((value) => (
-                  <button type="button" key={value} className={hours === value ? 'active' : ''} aria-pressed={hours === value} onClick={() => setHours(value)}>
+                  <button type="button" key={value} className={wireHours === value ? 'active' : ''} aria-pressed={wireHours === value} onClick={() => setWireHours(value)}>
                     {value < 24 ? `${value}h` : `${value / 24}d`}
                   </button>
                 ))}
@@ -703,6 +904,7 @@ export function WorldRadar({
             </div>
           )}
           <section className="wire-feed" aria-label="事件快讯" aria-busy={wireLoading}>
+            {wireError && <LoadError message={wireError} onRetry={() => void loadWire(true)} busy={wireLoading} />}
             {wireLoading && !wire ? (
               <RadarSkeleton label="正在更新" />
             ) : wire?.items.length ? wire.items.map((item) => (
@@ -725,7 +927,7 @@ export function WorldRadar({
                 <ArrowRight size={17} />
               </button>
             )) : (
-              <div className="radar-empty"><Radio />暂无快讯</div>
+              !wireError && <div className="radar-empty"><Radio />暂无快讯</div>
             )}
           </section>
         </main>
@@ -784,7 +986,7 @@ export function WorldRadar({
   )
 }
 
-function EventCard({
+const EventCard = memo(function EventCard({
   item,
   index,
   active,
@@ -795,11 +997,11 @@ function EventCard({
   index: number
   active: boolean
   saved: boolean
-  onSelect: () => void
+  onSelect: (eventId: string, card: HTMLButtonElement) => void
 }) {
   const stateClass = item.feedback === 'known' ? ' completed' : saved ? ' saved' : ''
   return (
-    <button type="button" className={`event-card${active ? ' active' : ''}${stateClass}`} onClick={onSelect} aria-pressed={active}>
+    <button type="button" className={`event-card${active ? ' active' : ''}${stateClass}`} onClick={(event) => onSelect(item.event_id, event.currentTarget)} aria-pressed={active}>
       <span className="event-index">{String(index).padStart(2, '0')}</span>
       <div className="event-card-body">
         <div className="event-meta">
@@ -827,7 +1029,7 @@ function EventCard({
       <ArrowRight className="event-open" size={18} />
     </button>
   )
-}
+})
 
 function EventInspector({
   detail,
@@ -882,7 +1084,7 @@ function EventInspector({
       </section>
 
       <section className="event-timeline">
-        <div className="inspector-section-title"><Clock3 size={16} /><strong>事件 Ledger</strong></div>
+        <div className="inspector-section-title"><Clock3 size={16} /><strong>事件时间线</strong></div>
         {detail.timeline.length ? detail.timeline.map((revision) => (
           <div className="timeline-row" key={revision.id}>
             <RevisionBadge type={revision.revision_type} compact />
@@ -896,6 +1098,7 @@ function EventInspector({
 
       <section className="event-evidence">
         <div className="inspector-section-title"><BookOpen size={16} /><strong>来源与证据</strong></div>
+        {detail.evidence.length === 0 && <p className="inspector-empty">暂无可展示的原始证据。</p>}
         {detail.evidence.map((evidence) => (
           <button type="button" key={evidence.article_id} onClick={() => onOpenArticle(evidence.article_id)}>
             <span>{evidence.source_title}<b>质量 {evidence.quality_score}</b></span>
@@ -904,6 +1107,8 @@ function EventInspector({
           </button>
         ))}
       </section>
+
+      <OsintPanel key={event.event_id} eventId={event.event_id} />
 
       <section className="event-feedback">
         <strong>调整后续雷达</strong>
@@ -944,6 +1149,14 @@ function RadarSkeleton({ label, compact = false }: { label: string; compact?: bo
       ))}
     </div>
   )
+}
+
+function LoadError({ message, onRetry, busy }: { message: string; onRetry: () => void; busy: boolean }) {
+  return <div className="radar-load-error" role="alert">
+    <XCircle size={20} aria-hidden="true" />
+    <div><strong>加载失败</strong><p>{message}</p></div>
+    <button type="button" onClick={onRetry} disabled={busy}><RefreshCw size={16} />重试</button>
+  </div>
 }
 
 function RevisionBadge({ type, compact = false }: { type: EventBriefItem['revision_type']; compact?: boolean }) {

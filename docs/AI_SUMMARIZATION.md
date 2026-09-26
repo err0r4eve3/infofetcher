@@ -35,7 +35,9 @@
 - 单篇正文不超过 280 字，或只有至多两个有效证据段：直接抽取原文，不调用 LLM。
 - 未配置 `LLM_API_KEY`：使用同一确定性抽取路径，明确标记为 `extractive-local`。
 - 普通文章：使用 `grounded-article-v3`。
-- 同一 story 中存在不同 hostname、feed 和 `content_hash` 的材料时：最多取 5 个来源，使用 `grounded-event-v3`，摘要仍归属于请求文章，不持久依赖不稳定的 `story_id`。
+- 同一 story 中存在不同 publisher 标识、feed、`content_hash` 和规范化 URL 的材料时：最多取 5 个来源，使用 `grounded-event-v3`，摘要仍归属于请求文章，不持久依赖不稳定的 `story_id`。publisher 标识与事件快讯共用站点 hostname / 显式 Hub route 规则；相同原文的跟踪参数不会制造额外佐证。
+- 自动补充材料排除已静音来源，并按用户调整后的来源质量、文章质量和时间排序。显式请求的文章或事件焦点仍优先保留；两个入口的原有候选上限分别为 24 和 30 篇，最终最多取 5 篇。
+- 事件流程版本升为 `event-wire-agent-v10`。部署后，旧版本快讯会在现有回看窗口和队列上限内重新核验，产生正常的模型调用；本次本地验证未调用模型或触发线上任务。
 
 ### 2. 长文与多源输入
 
@@ -68,6 +70,7 @@
 - `confidence` 仅保留用于旧 API 兼容；新 UI 以“材料支撑度”展示，并明确来源数量和分歧。
 - `event_snapshot` 保存实际使用的 `source_article_ids` 与 `input_hash`。任一来源正文更新后，相关已完成摘要会被标记失效，要求重新生成。
 - `input_hash` 同时包含 pipeline revision、provider、model、上下文预算和输出预算，影响结果的配置变化不会继续复用旧快照。
+- 文章摘要的快照标识还包含 feed、publisher 标识、来源名、文章标题和 URL；这些引用信息在生成期间变化时，同样拒绝写入旧快照。报告只有在摘要非空且存在 `grounding_score` 时才增加已核验摘要的排序奖励，本地摘录仍可显示但不获得该奖励。
 
 ## 质量门槛
 
@@ -108,6 +111,38 @@ read_event
 - `insufficient`：只能抽取原文，未完成生成式多源核验。
 
 这些标签不是现实世界真伪概率。C2PA 等来源证明只能验证内容来源和修改历史，不替内容本身作真假判断；Google Fact Check / ClaimReview 只能在存在匹配的专业事实核查时作为额外证据。当前版本因此只声称“材料内多源一致”或“存在分歧”，不输出无证据的“真/假”。
+
+## OSINT 调查
+
+事件详情中的「OSINT 调查」把来源调查、材料分析和可复核留存接到现有事件证据上：
+
+| 方法/工具 | 项目中的对应行为 |
+| --- | --- |
+| [SIFT](https://hapgood.us/2019/06/19/sift-the-four-moves/) | 调查发布者；追踪规范链接、页面声明的原始链接和正文外链；提供交叉检索、更正与反证检索。原站自述信息仍作为线索，不提升可信度。 |
+| [Berkeley Protocol](https://searchlibrary.ohchr.org/record/30334) | 参考数字材料留存原则，记录 URL、抓取时间、响应状态、精确响应体字节和 SHA-256，并可导出复核。此实现不宣称符合完整司法证据链要求。 |
+| [ICD 203](https://www.dni.gov/files/documents/ICD/ICD-203.pdf) | 将来源评分、材料内主张支撑、不确定性分开；保留分歧、缺失日期和单组支撑的缺口，提示寻找能推翻主张的记录，不编造替代事实。 |
+| [Wayback Availability API](https://archive.org/help/wayback_api.php) | 用户勾选后查询已有历史存档，记录存档时间及查询状态；失败与未找到严格区分。 |
+| [Bellingcat Toolkit](https://github.com/bellingcat/toolkit) | 提供专业工具目录入口，供需要图像、视频、地图等调查时按任务选工具；本版本不会假称已经运行媒体鉴伪。 |
+
+「依赖组」按同 publisher、规范链接或正文指纹传递合并，最多分析质量排序前 60 篇未静音材料。老数据以 URL hash 回填的 content hash 不当作正文指纹。不同组仍可能共享通讯社稿件、媒体所有权或原始声明；目前只能发现已知依赖，不能以组数证明独立性。核心支撑组只统计当前可见材料中核心主张的已核验引文，旁支、未核验引文不会抬高数值。引文属于注明时间的分析快照，取证属于另一次页面观察。
+
+抓取由用户主动触发，使用无阅读器凭据的 HTTP 请求，遵循共享重定向/私网检查；即使 `ALLOW_PRIVATE_FETCH=true`，OSINT 仍拒绝私网。响应上限 1 MiB、总取证超时 20 秒，Wayback 另限 10 秒；只保留 content-type、content-encoding、etag、last-modified、date 响应头。禁用自动解压，SHA-256 覆盖导出的确切响应体字节，不包含 TLS、HTTP 帧或全部响应头；它能检测该字节串的变化，不能证明事实真实或可信时间戳。仅对未压缩 HTML 提取元数据，非 UTF-8 页面可能出现乱码；始终保留原字节，不渲染 HTML、不执行脚本、不跟进正文外链。
+
+记录随原文/事件保留周期或事件重建清理；需要长期留存时先导出。取证不会重新跑模型或自动发布主张。现有 OpenCLI 白名单和 RSSHub 继续负责平台采集，不增加任意命令执行器，也不要求安装无关侦察工具。
+
+使用 Fake-IP DNS 的本机若将公开域名解析到 `198.18.0.0/15`，会被现有保留地址检查拒绝；部署环境需提供可校验的真实公共解析。不要为取证关闭私网保护。
+
+可在本地校验导出文件：
+
+```python
+import hashlib, json
+from pathlib import Path
+
+record = json.loads(Path("osint-export.json").read_text())
+body = bytes.fromhex(record["body_hex"])
+assert len(body) == record["byte_length"]
+assert hashlib.sha256(body).hexdigest() == record["sha256"]
+```
 
 ## 已知边界
 

@@ -5,7 +5,7 @@
 ## 功能
 
 - 单用户本地管理员登录，Cookie session 保护 API 和 UI。
-- 默认“现在”首页按 3/10/20 分钟注意力预算生成有限事件简报，并分离影响、新颖度、时效、可信度和用户相关性。
+- 默认首页生成过去 12 小时或 24 小时的全面报告，按全球、AI/科技、安全、商业和其他重要变化分节；连续快讯保留在独立页面。
 - 事件 Ledger 持久记录 `ADD / UPDATE / CORRECT / CONTRADICT / CONFIRM`，事件详情展示时间线与来源证据。
 - Watch 统一主题、实体和问题关注；“多看/少看/已知/聚类有误”反馈直接参与后续排序。
 - 原三栏阅读器保留为“全部资料”，继续提供质量/时间排序、来源偏好和连续加载。
@@ -19,6 +19,7 @@
 - 按需文章翻译，使用独立的 OpenAI-compatible 配置、非思考模式和持久化译文，不覆盖原文。
 - 关键词检测规则，支持按订阅/分类选择目标、记录命中，并批量触发 AI 总结或 Telegram 推送。
 - OPML 导入/导出。
+- 按需 OSINT 调查 Agent：GDELT / SearXNG 检索补证、公开原文读取、同源去重、主张核验、调查过程与 JSON 导出，见 [工具选型与配置](docs/OSINT_RESEARCH.md)。
 
 ## 本地开发
 
@@ -30,10 +31,7 @@ npm install
 npm run dev:web
 ```
 
-本地开发默认账号：
-
-- 用户名：`admin`
-- 密码：`change-me-now`
+登录只需一个 token。启动前在未跟踪的 `.env` 中配置随机 `AUTH_TOKEN`（32–256 个无空白 ASCII 字符，建议 32 字节随机值的十六进制编码），没有默认值。
 
 开发前端默认在 `http://localhost:5173`，API 默认在 `http://localhost:8080`。
 
@@ -44,11 +42,13 @@ cp .env.example .env
 docker compose up --build
 ```
 
-打开 `http://localhost:8080`。公网部署必须设置非默认 `ADMIN_PASSWORD`；服务会拒绝以默认密码启动公网 URL。
+打开 `http://localhost:8080`。必须配置 `AUTH_TOKEN`；缺失或格式不合法时服务拒绝启动。旧用户名/密码不再用于登录，`ADMIN_USERNAME` 仅保留内部数据归属。token 只在登录时提交，后续请求使用 HttpOnly 会话 cookie。更换 token 后重启 API；若要立即撤销已登录设备，还需清空 `sessions` 表。
+
+默认 `CONTENT_RETENTION_DAYS=365`。服务每 6 小时分批清理超过 365 天且未收藏的文章，以及关联摘要、翻译、关键词命中、事件材料和已完成任务，再同步删除全文索引文档。订阅、账号、Watch、反馈偏好和显式收藏不随内容轮换删除；也可以手动运行 `rss-hub-reader-api prune-retention`。
 
 ## 信息质量与排序
 
-- “现在”从最近 12 小时、1 天或 3 天内最多 2,000 个候选中先做证据门槛，再按注意力预算选取有限集合，不用低信号内容填满条数。
+- 全面报告从最近 12 或 24 小时内最多 2,000 个候选中先做证据门槛，再选取最多 30 或 48 个去重事件并按主题分节，不用低信号内容填满条数。
 - 事件排序分别计算影响、变化新颖度、连续时效衰减、可信度和用户相关性；最终以 MMR 风格重排抑制重复标题、正文、URL、主题和 publisher 集中。
 - Watch 命中和跨事件反馈参与用户相关性，但不能绕过证据门槛；单一来源事件会明确标记“等待交叉确认”。
 - 设置页仍可提高/降低来源权重或静音来源；旧主题监控会在迁移时导入 Watch。
@@ -71,17 +71,20 @@ docker compose up --build
 - `LLM_CONTEXT_BUDGET_CHARS` 默认 64000；服务端预留约 20000 字符给 system prompt、JSON Schema、来源目录和输出，再把其余预算均分给证据正文。事件快讯的总上下文额外限制为 48000，普通文章保持完整配置。provider 支持原生 JSON Schema 时，Schema 只随 `response_format` 发送一次；兼容降级时才补入 prompt。
 - `EVENT_AGENT_UPDATE_DEBOUNCE_SECONDS` 默认 1800。同一事件首次出现时立即生成；后续普通来源更新最多每 30 分钟重算一次，`CORRECT` / `CONTRADICT` 修订不等待该窗口。
 - 成功响应会把 provider 返回的 `prompt_tokens / completion_tokens / total_tokens`、思考 token、prompt cache 命中/未命中 token 与本地输入字符数写入日志，便于持续核对优化是否生效；日志不记录正文或 API Key。
+- 核验请求将主张全文按 `claim_id` 只发送一次，各条证据检查引用同一主张，减少多来源核验中的重复输入；证据全文、逐条核验结果和输出校验保持不变。实际 token 节省以 provider usage 为准。
 
 方法选择、研究依据、质量门槛与已知边界见 [`docs/AI_SUMMARIZATION.md`](docs/AI_SUMMARIZATION.md)。
 
 ## 按需翻译
 
-阅读器中的翻译按钮会把当前文章翻译为简体中文并单独保存；原文始终保留，正文更新后旧译文自动失效。翻译服务与摘要服务使用两组独立配置：
+阅读器工具栏中的语言按钮会按需翻译全文并单独保存；原文始终保留，正文更新后旧译文自动失效。在原文正文中选中文字，还会出现贴近选区的“译成中文/英文”操作；划词结果只保留在当前页面，不写入文章译文表，同一选区会在页面内复用结果，避免重复调用。
+
+翻译服务与摘要服务使用两组独立配置，默认兼容 OpenAI API：
 
 ```bash
-TRANSLATION_BASE_URL=https://api.deepseek.com
+TRANSLATION_BASE_URL=https://api.openai.com/v1
 TRANSLATION_API_KEY=
-TRANSLATION_MODEL=deepseek-v4-flash
+TRANSLATION_MODEL=gpt-5.6-luna
 TRANSLATION_TIMEOUT_SECONDS=60
 TRANSLATION_MAX_CONCURRENCY=2
 TRANSLATION_MAX_INPUT_CHARS=60000
@@ -89,7 +92,7 @@ TRANSLATION_CHUNK_CHARS=6000
 TRANSLATION_MAX_OUTPUT_TOKENS=8192
 ```
 
-当前 DeepSeek V4 Flash 调用固定使用非思考模式。文章正文按不可信数据处理，模型必须翻译正文中的祈使句而不能执行它们；响应必须通过严格 JSON 解码才会持久化。失败会明确返回错误，不会用低质量本地译文伪装成正式结果。
+文章正文和划词内容都按不可信数据处理，模型必须翻译其中的祈使句而不能执行它们；响应必须通过严格 JSON 解码后才会返回或持久化。划词翻译单次最多 4,000 字符，并与全文翻译共享并发限制。失败会明确返回错误，不会用低质量本地译文伪装成正式结果。
 
 事件快讯标题优先使用上述独立翻译配置；未配置 `TRANSLATION_API_KEY` 时会改用事件摘要的 `LLM_*` provider。独立翻译遇到不可重试的 4xx 会立即终止重试；若同时配置了主摘要模型，还会在当前进程内熔断独立翻译并切回主模型，避免余额不足等错误反复放大调用。启用 `EVENT_AGENT_ENABLED=true` 时，两组 API Key 至少要配置一组，否则服务会在启动时明确拒绝该无效配置。
 

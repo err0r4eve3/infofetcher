@@ -12,6 +12,9 @@ pub async fn validate_http_url(raw: &str, allow_private: bool) -> AppResult<Url>
     if !matches!(url.scheme(), "http" | "https") {
         return Err(AppError::BadRequest("只允许 http/https URL".to_string()));
     }
+    if !url.username().is_empty() || url.password().is_some() {
+        return Err(AppError::BadRequest("URL 不允许包含凭据".to_string()));
+    }
     let host = url
         .host_str()
         .ok_or_else(|| AppError::BadRequest("URL 缺少 hostname".to_string()))?;
@@ -121,7 +124,7 @@ pub async fn read_response_limited(mut response: Response, limit: usize) -> AppR
     Ok(bytes)
 }
 
-fn ip_is_private_or_reserved(ip: IpAddr) -> bool {
+pub(crate) fn ip_is_private_or_reserved(ip: IpAddr) -> bool {
     match ip {
         IpAddr::V4(ip) => ipv4_is_private_or_reserved(ip),
         IpAddr::V6(ip) => ipv6_is_private_or_reserved(ip),
@@ -158,6 +161,20 @@ fn ipv6_is_private_or_reserved(ip: Ipv6Addr) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn rejects_url_credentials_before_dns_or_redirect_fetch() {
+        assert!(
+            validate_http_url("https://user:secret@example.invalid/", true)
+                .await
+                .is_err()
+        );
+        assert!(
+            validate_http_url("https://user@example.invalid/", false)
+                .await
+                .is_err()
+        );
+    }
 
     #[test]
     fn rejects_private_and_reserved_addresses() {

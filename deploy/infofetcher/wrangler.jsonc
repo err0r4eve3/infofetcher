@@ -1,0 +1,11 @@
+{
+  "name": "infofetcher",
+  "account_id": "7b154a3b7cb1e1f6694d0508109c2186",
+  "main": "worker.js",
+  "compatibility_date": "2026-09-08",
+  "workers_dev": false,
+  "preview_urls": false,
+  "routes": [
+    { "pattern": "infofetcher.error.moe", "custom_domain": true }
+  ]
+}

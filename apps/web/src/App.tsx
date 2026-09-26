@@ -10,7 +10,6 @@ import {
   FileUp,
   FolderPlus,
   Import,
-  KeyRound,
   Languages,
   ListChecks,
   LogOut,
@@ -37,6 +36,8 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
   type PointerEvent as ReactPointerEvent,
   type RefObject,
+  lazy,
+  Suspense,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -65,7 +66,8 @@ import {
   Summary
 } from './api'
 import { formatArticleParagraphs } from './articleText'
-import { WorldRadar } from './WorldRadar'
+import { SelectionTranslator } from './SelectionTranslator'
+const WorldRadar = lazy(() => import('./WorldRadar').then((module) => ({ default: module.WorldRadar })))
 
 type User = { username: string }
 
@@ -115,8 +117,10 @@ function writeAppLocation(
 
 type ReadyMadeFeed = {
   title: string
-  url: string
+  url?: string
+  rsshubPath?: string
   category: string
+  qualityScore?: number
 }
 
 type FeedPreferencePatch = {
@@ -181,14 +185,15 @@ const SUMMARY_POLL_INTERVAL_MS = 2_000
 const SUMMARY_POLL_DEADLINE_MS = 120_000
 const SUMMARY_REQUEST_TIMEOUT_MS = 10_000
 const PRESET_CATEGORY_ORDER = [
-  '论坛',
+  '一手发布',
   '老牌媒体',
   '科技媒体',
   '科技',
   '工程博客',
   '专家观点',
   'AI 研究',
-  '信息安全'
+  '信息安全',
+  '论坛'
 ]
 
 const TELEGRAM_NEWS_SOURCES: RssHubSocialSource[] = [
@@ -226,6 +231,13 @@ function waitWithAbort(milliseconds: number, signal: AbortSignal): Promise<boole
 }
 
 const READY_MADE_FEEDS: ReadyMadeFeed[] = [
+  { title: 'UN News', url: 'https://news.un.org/feed/subscribe/en/news/all/rss.xml', category: '一手发布' },
+  { title: 'Federal Reserve Monetary Policy', url: 'https://www.federalreserve.gov/feeds/press_monetary.xml', category: '一手发布' },
+  { title: 'ECB Press Releases', url: 'https://www.ecb.europa.eu/rss/press.html', category: '一手发布' },
+  { title: '国家统计局 最新发布', url: 'https://www.stats.gov.cn/sj/zxfb/rss.xml', category: '一手发布' },
+  { title: '国家统计局 数据解读', url: 'https://www.stats.gov.cn/sj/sjjd/rss.xml', category: '一手发布' },
+  { title: '工信部 政策解读', rsshubPath: 'gov/miit/zcjd', category: '一手发布' },
+  { title: '国家网信办 信息化', rsshubPath: 'gov/cac/wxzw/xxh', category: '一手发布' },
   { title: 'NodeSeek', url: 'https://rss.nodeseek.com/', category: '论坛' },
   { title: 'LINUX DO 最新', url: 'https://linux.do/latest.rss?order=created', category: '论坛' },
   { title: 'V2EX 全站最新', url: 'https://www.v2ex.com/index.xml', category: '论坛' },
@@ -286,6 +298,8 @@ const READY_MADE_FEEDS: ReadyMadeFeed[] = [
   },
   { title: '硅谷101', url: 'https://feeds.fireside.fm/sv101/rss', category: '专家观点' },
   { title: 'OpenAI News', url: 'https://openai.com/news/rss.xml', category: 'AI 研究' },
+  { title: 'Anthropic News', rsshubPath: 'anthropic/news', category: 'AI 研究' },
+  { title: 'Hugging Face Weekly Papers', rsshubPath: 'huggingface/daily-papers/week/50', category: 'AI 研究', qualityScore: 72 },
   { title: 'Google Research Blog', url: 'https://research.google/blog/rss/', category: 'AI 研究' },
   { title: 'Google DeepMind', url: 'https://deepmind.google/blog/rss.xml', category: 'AI 研究' },
   { title: 'Hugging Face Blog', url: 'https://huggingface.co/blog/feed.xml', category: 'AI 研究' },
@@ -298,12 +312,15 @@ const READY_MADE_FEEDS: ReadyMadeFeed[] = [
   { title: 'arXiv cs.LG', url: 'https://rss.arxiv.org/rss/cs.LG', category: 'AI 研究' },
   { title: 'Google Online Security Blog', url: 'https://security.googleblog.com/feeds/posts/default', category: '信息安全' },
   { title: 'Google Project Zero', url: 'https://googleprojectzero.blogspot.com/feeds/posts/default', category: '信息安全' },
+  { title: 'GitHub Advisories · npm', rsshubPath: 'github/advisor/data/reviewed/npm', category: '信息安全', qualityScore: 84 },
+  { title: 'GitHub Advisories · Rust', rsshubPath: 'github/advisor/data/reviewed/rust', category: '信息安全', qualityScore: 84 },
   { title: 'The Hacker News', url: 'https://feeds.feedburner.com/TheHackersNews', category: '信息安全' }
 ]
 
 function presetSourceMetadata(preset: ReadyMadeFeed) {
-  const isChinese = preset.category === '社区' || /[\u3400-\u9fff]/.test(preset.title)
+  const isChinese = preset.category === '论坛' || /[\u3400-\u9fff]/.test(preset.title)
   const qualityByCategory: Record<string, number> = {
+    '一手发布': 82,
     '老牌媒体': 85,
     '科技媒体': 80,
     '专家观点': 84,
@@ -314,11 +331,21 @@ function presetSourceMetadata(preset: ReadyMadeFeed) {
     '论坛': 58
   }
   return {
-    source_type: preset.url.includes('/hub/') ? 'adapter' : 'rss',
+    source_type: preset.rsshubPath || preset.url?.includes('/hub/') ? 'adapter' : 'rss',
     language: isChinese ? 'zh' : 'en',
     region: isChinese ? 'CN' : 'GLOBAL',
-    quality_score: qualityByCategory[preset.category] ?? 60
+    quality_score: preset.qualityScore ?? qualityByCategory[preset.category] ?? 60
   }
+}
+
+function matchesPresetFeed(feed: Feed, preset: ReadyMadeFeed) {
+  return preset.rsshubPath
+    ? feed.hub_adapter === 'rsshub' && feed.hub_path === preset.rsshubPath
+    : feed.feed_url === preset.url
+}
+
+function presetDisplayUrl(preset: ReadyMadeFeed) {
+  return preset.rsshubPath ? `RSSHub /${preset.rsshubPath}` : preset.url ?? ''
 }
 
 function priorityReasonLabel(reason: string): string {
@@ -437,7 +464,6 @@ export function App() {
   return (
     <ReaderApp
       user={user}
-      onUserChange={setUser}
       onLogout={() => setUser(null)}
       theme={theme}
       onToggleTheme={toggleTheme}
@@ -458,8 +484,7 @@ function LoginScreen({
   theme: Theme
   onToggleTheme: () => void
 }) {
-  const [username, setUsername] = useState('')
-  const [password, setPassword] = useState('')
+  const [token, setToken] = useState('')
   const [submitting, setSubmitting] = useState(false)
 
   async function submit(event: FormEvent) {
@@ -469,7 +494,7 @@ function LoginScreen({
     try {
       const user = await api<User>('/api/auth/login', {
         method: 'POST',
-        body: JSON.stringify({ username, password })
+        body: JSON.stringify({ token })
       })
       onLogin(user)
     } catch (err) {
@@ -492,20 +517,21 @@ function LoginScreen({
           <ThemeToggle theme={theme} onToggleTheme={onToggleTheme} />
         </div>
         <label>
-          用户名
-          <input value={username} onChange={(event) => setUsername(event.target.value)} autoComplete="username" />
-        </label>
-        <label>
-          密码
+          Token
           <input
-            value={password}
-            onChange={(event) => setPassword(event.target.value)}
+            value={token}
+            onChange={(event) => setToken(event.target.value)}
             type="password"
+            name="token"
             autoComplete="current-password"
+            autoCapitalize="none"
+            spellCheck={false}
+            required
+            maxLength={256}
           />
         </label>
         {error && <div className="error-line" role="alert">{error}</div>}
-        <button className="primary-button" disabled={submitting}>
+        <button className="primary-button" disabled={submitting || !token}>
           {submitting ? '登录中...' : '打开信息雷达'}
         </button>
       </form>
@@ -515,13 +541,11 @@ function LoginScreen({
 
 function ReaderApp({
   user,
-  onUserChange,
   onLogout,
   theme,
   onToggleTheme
 }: {
   user: User
-  onUserChange: (user: User) => void
   onLogout: () => void
   theme: Theme
   onToggleTheme: () => void
@@ -947,25 +971,45 @@ function ReaderApp({
     await addSocialSource('rsshub', rssHubRoute)
   }
 
+  async function createPresetFeed(preset: ReadyMadeFeed, folderId: string): Promise<Feed> {
+    const metadata = presetSourceMetadata(preset)
+    if (preset.rsshubPath) {
+      if (!socialSourceCatalog?.rsshub_enabled) throw new Error('RSSHub 尚未启用')
+      return api<Feed>('/api/social-sources', {
+        method: 'POST',
+        body: JSON.stringify({
+          adapter: 'rsshub',
+          path: preset.rsshubPath,
+          title: preset.title,
+          folder_id: folderId,
+          ...metadata
+        })
+      })
+    }
+    if (!preset.url) throw new Error('推荐订阅缺少 URL')
+    return api<Feed>('/api/feeds', {
+      method: 'POST',
+      body: JSON.stringify({
+        feed_url: preset.url,
+        title: preset.title,
+        folder_id: folderId,
+        ...metadata
+      })
+    })
+  }
+
   async function addReadyFeed(preset: ReadyMadeFeed) {
     await guarded(async () => {
+      if (preset.rsshubPath && !socialSourceCatalog?.rsshub_enabled) throw new Error('RSSHub 尚未启用')
       const folderId = await ensureFolder(preset.category)
-      const existing = feeds.find((feed) => feed.feed_url === preset.url)
+      const existing = feeds.find((feed) => matchesPresetFeed(feed, preset))
       if (existing && existing.folder_id === folderId) {
         selectFeed(existing.id)
         setNotice(`${preset.title} 已在订阅列表中`)
         return
       }
 
-      const feed = await api<Feed>('/api/feeds', {
-        method: 'POST',
-        body: JSON.stringify({
-          feed_url: preset.url,
-          title: preset.title,
-          folder_id: folderId,
-          ...presetSourceMetadata(preset)
-        })
-      })
+      const feed = await createPresetFeed(preset, folderId)
       selectFeed(feed.id)
       await refreshShell()
       setNotice(existing ? `已将 ${preset.title} 归入 ${preset.category}` : `已添加 ${preset.title}，后台正在抓取`)
@@ -977,18 +1021,21 @@ function ReaderApp({
       const folderId = await ensureFolder(category)
       let added = 0
       let updated = 0
+      let unavailable = 0
+      const failed: string[] = []
       for (const preset of READY_MADE_FEEDS.filter((feed) => feed.category === category)) {
-        const existing = feeds.find((feed) => feed.feed_url === preset.url)
+        if (preset.rsshubPath && !socialSourceCatalog?.rsshub_enabled) {
+          unavailable += 1
+          continue
+        }
+        const existing = feeds.find((feed) => matchesPresetFeed(feed, preset))
         if (existing && existing.folder_id === folderId) continue
-        await api<Feed>('/api/feeds', {
-          method: 'POST',
-          body: JSON.stringify({
-            feed_url: preset.url,
-            title: preset.title,
-            folder_id: folderId,
-            ...presetSourceMetadata(preset)
-          })
-        })
+        try {
+          await createPresetFeed(preset, folderId)
+        } catch {
+          failed.push(preset.title)
+          continue
+        }
         if (existing) {
           updated += 1
         } else {
@@ -997,7 +1044,11 @@ function ReaderApp({
       }
       selectFolder(folderId)
       await refreshShell()
-      setNotice(added || updated ? `已添加 ${added} 个、归类 ${updated} 个${category}订阅` : `${category}订阅都已存在`)
+      setNotice(
+        added || updated || unavailable || failed.length
+          ? `已添加 ${added} 个、归类 ${updated} 个${category}订阅${unavailable ? `；${unavailable} 个 RSSHub 来源未启用` : ''}${failed.length ? `；未添加：${failed.join('、')}` : ''}`
+          : `${category}订阅都已存在`
+      )
     })
   }
 
@@ -1026,20 +1077,6 @@ function ReaderApp({
         await refreshArticles()
       }
     }, `已删除 ${feed.title}`)
-  }
-
-  async function updateCredentials(username: string, currentPassword: string, newPassword: string) {
-    await guarded(async () => {
-      const nextUser = await api<User>('/api/auth/credentials', {
-        method: 'PATCH',
-        body: JSON.stringify({
-          username,
-          current_password: currentPassword,
-          new_password: newPassword || null
-        })
-      })
-      onUserChange(nextUser)
-    }, '账号信息已更新')
   }
 
   async function summarizeSelected() {
@@ -1093,7 +1130,7 @@ function ReaderApp({
     }
     setTranslatingIds((current) => new Set(current).add(articleId))
     setError(null)
-    setNotice('正在使用 DeepSeek Flash 翻译…')
+    setNotice('正在翻译全文…')
     try {
       const translation = await api<ArticleTranslation>('/api/translations', {
         method: 'POST',
@@ -1416,6 +1453,10 @@ function ReaderApp({
   }
 
   function scrollReaderToTop(behavior: ScrollBehavior = 'smooth') {
+    if (window.matchMedia('(max-width: 820px)').matches) {
+      window.scrollTo({ top: 0, behavior: resolveScrollBehavior(behavior) })
+      return
+    }
     document.querySelector('.reader-pane')?.scrollTo({ top: 0, behavior: resolveScrollBehavior(behavior) })
   }
 
@@ -1454,30 +1495,31 @@ function ReaderApp({
 
   if (activeView === 'now') {
     return (
-      <WorldRadar
-        userName={user.username}
-        theme={theme}
-        onToggleTheme={onToggleTheme}
-        onOpenSettings={() => navigateToView('settings')}
-        onOpenLibrary={(nextQuery, articleId) => {
-          setQuery(nextQuery ?? '')
-          if (articleId) {
-            directArticleOpenRef.current = true
-            setSelectedArticleId(articleId)
-            setMobilePane('reader')
-          } else {
-            setMobilePane('articles')
-          }
-          navigateToView('reader', { query: nextQuery ?? '', articleId: articleId ?? null })
-        }}
-      />
+      <Suspense fallback={<div className="boot" role="status">正在加载信息雷达…</div>}>
+        <WorldRadar
+          userName={user.username}
+          theme={theme}
+          onToggleTheme={onToggleTheme}
+          onOpenSettings={() => navigateToView('settings')}
+          onOpenLibrary={(nextQuery, articleId) => {
+            setQuery(nextQuery ?? '')
+            if (articleId) {
+              directArticleOpenRef.current = true
+              setSelectedArticleId(articleId)
+              setMobilePane('reader')
+            } else {
+              setMobilePane('articles')
+            }
+            navigateToView('reader', { query: nextQuery ?? '', articleId: articleId ?? null })
+          }}
+        />
+      </Suspense>
     )
   }
 
   if (activeView === 'settings') {
     return (
       <SettingsPage
-        user={user}
         theme={theme}
         feeds={feeds}
         folders={folders}
@@ -1532,7 +1574,6 @@ function ReaderApp({
         onRunKeywordMatchAction={runKeywordMatchAction}
         onImportOpml={importOpml}
         onLoadOpmlFile={loadOpmlFile}
-        onUpdateCredentials={updateCredentials}
         onLogout={logout}
       />
     )
@@ -1815,9 +1856,9 @@ function ReaderApp({
                     : selectedArticle.translation?.status === 'done'
                       ? showTranslation ? '显示原文' : '显示中文翻译'
                       : selectedArticle.translation?.status === 'failed'
-                        ? '重试翻译'
-                        : '翻译为中文'}
-                  aria-label={showTranslation ? '显示文章原文' : '翻译文章或显示中文翻译'}
+                        ? '重试全文翻译'
+                        : '翻译全文为中文'}
+                  aria-label={showTranslation ? '显示文章原文' : '翻译全文或显示中文译文'}
                   aria-pressed={showTranslation}
                 >
                   <Languages size={17} />
@@ -1859,7 +1900,11 @@ function ReaderApp({
               </div>
             )}
 
-            <div className="article-body" data-translated={showTranslation || undefined}>
+            <SelectionTranslator
+              articleId={selectedArticle.id}
+              sourceLanguage={selectedArticle.language}
+              translated={showTranslation && selectedArticle.translation?.status === 'done'}
+            >
               {formatArticleParagraphs(
                 showTranslation && selectedArticle.translation?.status === 'done'
                   ? selectedArticle.translation.translated_content || '译文为空。'
@@ -1868,7 +1913,7 @@ function ReaderApp({
                 .map((paragraph, index) => (
                   <p key={index}>{paragraph}</p>
                 ))}
-            </div>
+            </SelectionTranslator>
           </article>
         ) : (
           <div className="reader-empty">
@@ -2168,7 +2213,6 @@ function SocialSourcesPanel({
 }
 
 function SettingsPage({
-  user,
   theme,
   feeds,
   folders,
@@ -2223,10 +2267,8 @@ function SettingsPage({
   onRunKeywordMatchAction,
   onImportOpml,
   onLoadOpmlFile,
-  onUpdateCredentials,
   onLogout
 }: {
-  user: User
   theme: Theme
   feeds: Feed[]
   folders: Folder[]
@@ -2281,24 +2323,9 @@ function SettingsPage({
   onRunKeywordMatchAction: (summarize: boolean, telegram: boolean) => Promise<void>
   onImportOpml: () => void
   onLoadOpmlFile: (event: ChangeEvent<HTMLInputElement>) => void
-  onUpdateCredentials: (username: string, currentPassword: string, newPassword: string) => void
   onLogout: () => void
 }) {
-  const [accountUsername, setAccountUsername] = useState(user.username)
-  const [currentPassword, setCurrentPassword] = useState('')
-  const [newPassword, setNewPassword] = useState('')
   const totalUnread = feeds.reduce((total, feed) => total + feed.unread_count, 0)
-
-  useEffect(() => {
-    setAccountUsername(user.username)
-  }, [user.username])
-
-  async function submitCredentials(event: FormEvent) {
-    event.preventDefault()
-    await onUpdateCredentials(accountUsername, currentPassword, newPassword)
-    setCurrentPassword('')
-    setNewPassword('')
-  }
 
   return (
     <>
@@ -2315,7 +2342,7 @@ function SettingsPage({
           <ThemeToggle theme={theme} onToggleTheme={onToggleTheme} />
           <button type="button" className="secondary-button" onClick={onBack}>
             <ArrowLeft size={16} />
-            返回阅读
+            返回报告
           </button>
         </div>
       </header>
@@ -2334,47 +2361,13 @@ function SettingsPage({
         <section className="settings-section">
           <div className="settings-section-header">
             <div>
-              <h2>账号密码</h2>
-              <p>新密码留空时只更新用户名</p>
+              <h2>登录</h2>
             </div>
             <button type="button" className="secondary-button" onClick={onLogout}>
               <LogOut size={16} />
               退出登录
             </button>
           </div>
-          <form className="settings-form" onSubmit={submitCredentials}>
-            <label>
-              用户名
-              <input
-                value={accountUsername}
-                onChange={(event) => setAccountUsername(event.target.value)}
-                autoComplete="username"
-              />
-            </label>
-            <label>
-              当前密码
-              <input
-                value={currentPassword}
-                onChange={(event) => setCurrentPassword(event.target.value)}
-                type="password"
-                autoComplete="current-password"
-              />
-            </label>
-            <label>
-              新密码
-              <input
-                value={newPassword}
-                onChange={(event) => setNewPassword(event.target.value)}
-                type="password"
-                autoComplete="new-password"
-                placeholder="留空则不改密码"
-              />
-            </label>
-            <button className="primary-button settings-submit" disabled={busy || !accountUsername.trim() || !currentPassword}>
-              <KeyRound size={16} />
-              保存账号
-            </button>
-          </form>
         </section>
 
         <section className="settings-section">
@@ -2534,19 +2527,21 @@ function SettingsPage({
                   </button>
                 </div>
                 {group.feeds.map((preset) => {
-                  const added = feeds.some((feed) => feed.feed_url === preset.url)
+                  const added = feeds.some((feed) => matchesPresetFeed(feed, preset))
+                  const unavailable = Boolean(preset.rsshubPath && !socialSourceCatalog?.rsshub_enabled)
+                  const displayUrl = presetDisplayUrl(preset)
                   return (
                     <button
-                      key={preset.url}
+                      key={preset.rsshubPath ?? preset.url}
                       type="button"
                       className={added ? 'preset-row added' : 'preset-row'}
                       onClick={() => onAddReadyFeed(preset)}
-                      disabled={busy}
-                      title={preset.url}
+                      disabled={busy || unavailable}
+                      title={unavailable ? 'RSSHub 尚未启用' : displayUrl}
                     >
                       <span className="preset-copy">
                         <strong>{preset.title}</strong>
-                        <small>{preset.url}</small>
+                        <small>{displayUrl}</small>
                       </span>
                       {added ? <CheckCircle2 size={15} /> : <Plus size={15} />}
                     </button>

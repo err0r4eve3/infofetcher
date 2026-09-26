@@ -8,9 +8,10 @@ pub struct Config {
     pub app_bind: SocketAddr,
     pub app_public_url: String,
     pub admin_username: String,
-    pub admin_password: String,
+    pub auth_token: String,
     pub cookie_secure: bool,
     pub session_days: i64,
+    pub content_retention_days: i64,
     pub index_dir: PathBuf,
     pub web_dist_dir: PathBuf,
     pub fetch_concurrency: usize,
@@ -26,6 +27,7 @@ pub struct Config {
     pub llm_max_output_tokens: u32,
     pub llm_context_budget_chars: usize,
     pub event_agent_enabled: bool,
+    pub osint_searxng_url: Option<String>,
     pub event_agent_interval: Duration,
     pub event_agent_lookback_hours: i64,
     pub event_agent_max_pending: usize,
@@ -84,9 +86,10 @@ impl Config {
         let app_bind = env_string("APP_BIND", "0.0.0.0:8080").parse()?;
         let app_public_url = env_string("APP_PUBLIC_URL", "http://localhost:8080");
         let admin_username = env_string("ADMIN_USERNAME", "admin");
-        let admin_password = env_string("ADMIN_PASSWORD", "change-me-now");
+        let auth_token = env_string("AUTH_TOKEN", "");
         let cookie_secure = env_bool("COOKIE_SECURE", app_public_url.starts_with("https://"));
         let session_days = env_i64("SESSION_DAYS", 14);
+        let content_retention_days = env_i64("CONTENT_RETENTION_DAYS", 365).clamp(1, 365);
         let index_dir = PathBuf::from(env_string("INDEX_DIR", "./data/tantivy"));
         let web_dist_dir = PathBuf::from(env_string("WEB_DIST_DIR", "./apps/web/dist"));
         let fetch_concurrency = env_usize("FETCH_CONCURRENCY", 8).max(1);
@@ -103,6 +106,16 @@ impl Config {
         let llm_context_budget_chars =
             env_usize("LLM_CONTEXT_BUDGET_CHARS", 64_000).clamp(16_000, 2_000_000);
         let event_agent_enabled = env_bool("EVENT_AGENT_ENABLED", false);
+        let osint_searxng_url = env_optional_string("OSINT_SEARXNG_URL");
+        if let Some(raw) = &osint_searxng_url {
+            let url = reqwest::Url::parse(raw)?;
+            anyhow::ensure!(
+                matches!(url.scheme(), "http" | "https") && url.host_str().is_some()
+                    && url.username().is_empty() && url.password().is_none()
+                    && url.query().is_none() && url.fragment().is_none(),
+                "OSINT_SEARXNG_URL 必须是不含凭据、查询参数和片段的 HTTP(S) 地址"
+            );
+        }
         let event_agent_interval =
             Duration::from_secs(env_u64("EVENT_AGENT_INTERVAL_SECONDS", 30).clamp(10, 3_600));
         let event_agent_lookback_hours =
@@ -144,9 +157,7 @@ impl Config {
         let opencli_feeds = parse_opencli_feeds()?;
         let web_watches = parse_web_watches()?;
 
-        if !is_local_public_url(&app_public_url) && admin_password == "change-me-now" {
-            anyhow::bail!("公网部署禁止使用默认 ADMIN_PASSWORD");
-        }
+        validate_auth_token(&auth_token)?;
         if event_agent_enabled
             && llm_api_key.trim().is_empty()
             && translation_api_key.trim().is_empty()
@@ -161,9 +172,10 @@ impl Config {
             app_bind,
             app_public_url,
             admin_username,
-            admin_password,
+            auth_token,
             cookie_secure,
             session_days,
+            content_retention_days,
             index_dir,
             web_dist_dir,
             fetch_concurrency,
@@ -179,6 +191,7 @@ impl Config {
             llm_max_output_tokens,
             llm_context_budget_chars,
             event_agent_enabled,
+            osint_searxng_url,
             event_agent_interval,
             event_agent_lookback_hours,
             event_agent_max_pending,
@@ -240,11 +253,11 @@ impl Config {
     }
 }
 
-fn is_local_public_url(value: &str) -> bool {
-    reqwest::Url::parse(value)
-        .ok()
-        .and_then(|url| url.host_str().map(str::to_ascii_lowercase))
-        .is_some_and(|host| host == "localhost" || host == "127.0.0.1" || host == "::1")
+fn validate_auth_token(token: &str) -> anyhow::Result<()> {
+    if !(32..=256).contains(&token.len()) || !token.bytes().all(|b| b.is_ascii_graphic()) {
+        anyhow::bail!("AUTH_TOKEN 必须为 32–256 个无空白 ASCII 字符，请使用随机生成的 token");
+    }
+    Ok(())
 }
 
 fn env_string(key: &str, default: &str) -> String {
@@ -402,10 +415,11 @@ mod tests {
     }
 
     #[test]
-    fn recognizes_local_public_urls() {
-        assert!(is_local_public_url("http://localhost:8080"));
-        assert!(is_local_public_url("http://127.0.0.1:8080"));
-        assert!(!is_local_public_url("https://reader.example.com"));
+    fn validates_auth_token() {
+        assert!(validate_auth_token(&"a".repeat(32)).is_ok());
+        for invalid in [String::new(), "a".repeat(31), "a".repeat(257), " ".repeat(32)] {
+            assert!(validate_auth_token(&invalid).is_err());
+        }
     }
 
     #[test]

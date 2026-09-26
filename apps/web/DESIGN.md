@@ -46,10 +46,11 @@ typography:
     lineHeight: 1.2
     letterSpacing: "normal"
 rounded:
+  page: "0"
   row: "6px"
   control: "10px"
-  panel: "16px"
-  shell: "16px"
+  panel: "16px (overlays only)"
+  shell: "0"
   pill: "999px"
 spacing:
   xs: "4px"
@@ -76,7 +77,7 @@ components:
   event-card:
     backgroundColor: "{colors.signal-surface}"
     textColor: "{colors.graphite-text}"
-    rounded: "0 within {rounded.panel} event list"
+    rounded: "0 within a flat event list"
     padding: "18px 16px"
   revision-badge:
     backgroundColor: "{colors.signal-soft}"
@@ -182,9 +183,9 @@ components:
 
 ### Buttons
 
-- **Shape:** 紧凑、精确的 10px 圆角矩形，核心触控高度固定为 44px；分段控件内部按钮使用 6px。
+- **Shape:** 普通按钮使用 6px，核心触控高度固定为 44px；10px 只用于输入与组合控件，静止态工具栏按钮优先透明而不是显示一排圆角底板。
 - **Primary:** Signal Ink 背景、Signal on Ink 文本，水平内边距 15px，字重 750。
-- **Selected:** 筛选、时间范围和工作流标签使用 Layer Focus 浅色抬升，不使用 Signal Ink，避免与主操作争夺注意力。
+- **Selected:** 顶栏筛选与工作流标签使用 2px 下划线；独立分段控件使用 Layer Focus 浅色抬升，不使用 Signal Ink，避免与主操作争夺注意力。
 - **Secondary:** Layer Work 背景配合 Control Lift；低频反馈和辅助动作停留在 Layer Recessed。
 - **Hover / Focus:** 悬停只改变色调；键盘焦点使用 2px Signal Ink 外轮廓和 2px 偏移。
 - **Secondary / Quiet:** Quiet Surface 或透明背景，不得与主操作争夺对比度。
@@ -196,20 +197,20 @@ components:
 
 ### Cards / Containers
 
-- **Corner Style:** 独立面板使用 16px，控件使用 10px，内容行使用 6px。连续事件与文章列表共用一个外层 16px 容器，内部行保持直角并以分隔线区分。
+- **Corner Style:** 页面、连续工作区和相连窗格使用 0px；当前焦点窗格与内容分组最多使用 6px；输入与组合控件使用 10px；16px 只允许用于会覆盖页面的弹层。
 - **Background:** Signal Surface 承载内容，Quiet Surface 承载内部摘要或次级证据。
-- **Shadow Strategy:** 默认使用 1px Inset Boundary；活动事件增加 2px 内强调并最多上移 1px。
+- **Shadow Strategy:** 页面层级优先使用背景明度步进和 1px 分隔线；只有当前焦点窗格与真实浮层可以使用外投影。
 - **Internal Padding:** 事件卡使用 18px × 16px；详情内容使用 24px。
 
 ### Inputs / Fields
 
-- **Style:** 44px 高、10px 圆角、Quiet Surface 背景；大型提问入口使用 16px 外容器包裹，并遵循同心圆角关系。
+- **Style:** 独立字段为 44px 高、10px 圆角、Quiet Surface 背景；紧凑顶栏搜索使用 6px；大型提问入口本身就是输入控件，不再套 16px 卡片容器。
 - **Focus:** 边界切换为 Signal Ink，并增加 4px 低对比焦点光环。
 - **Error / Disabled:** 错误使用 Correction Red 文本、软背景和边界；禁用态降低至 48–55% 不透明度并取消指针反馈。
 
 ### Navigation
 
-- **Style:** 桌面顶栏居中排列主视图，单项最小高度 44px；默认 Graphite Muted，活动项使用 Signal Soft 与内描边。
+- **Style:** 桌面顶栏排列主视图，单项最小高度 44px；默认 Graphite Muted，活动项使用 2px 下划线，不显示圆角底板。
 - **Mobile:** 固定底部四项导航，所有项目保持 44px 可点击高度和等权布局；文字标签不得仅以图标替代。
 
 ### Event Card
@@ -220,18 +221,25 @@ components:
 
 ### Brief Workflow
 
-简报工作流把有限事件分为“待处理、稍后、已完成、全部”四个稳定状态，并持续显示本轮处理进度。完成状态由服务端反馈持久化；稍后项目在浏览器本地保存事件快照，使用户跨时间窗回看时仍能进入最新详情。
+报告工作流把半日/全天报告内的有限事件分为“待处理、稍后、已完成、全部”四个稳定状态，并持续显示本轮处理进度。完成状态由服务端反馈持久化；稍后项目在浏览器本地保存事件快照，使用户跨时间窗回看时仍能进入最新详情。
 
-**The Finite Brief Rule.** 每份简报必须提供清晰的完成条件；进度只计算完成或明确推迟的事件，不能用滚动深度冒充完成。
+当可见报告包含多个主题时，显示带事件数量的主题目录；目录使用原生页内链接，跳转后焦点落在对应主题标题，移动端自然换行。事件序号按分组后的页面阅读顺序连续排列；目录与序号随状态筛选更新，空列表或单一主题不显示目录。
+
+默认详情选择分组后的首个可见事件，显式事件链接优先。选中事件以焦点表面和左侧标线区分于悬停。单栏布局下，点击事件将滚动与键盘焦点移到详情；详情提供返回列表操作，恢复到原事件，原事件已被筛掉时回到列表区域。首屏说明与进度保持紧凑，为事件内容留出阅读空间。
+
+圆角由外层容器承担：报告主题列表外缘、设置分组、摘要与来源分组统一使用 6px；列表内部事件行保持直角，避免每行重复圆角。输入与组合控件保留 10px，16px 留给登录或覆盖页面的面板。
+
+**The Finite Report Rule.** 每份报告必须绑定 12h/24h 覆盖窗口、证据门槛和有限入选集合；进度只计算完成或明确推迟的事件，不能用滚动深度冒充完成。
 
 ## Do's and Don'ts
 
 ### Do:
 
-- **Do** 把每份简报限制为一个明确的时间预算和有限事件数量。
+- **Do** 把每份报告限制为明确的半日/全天窗口和有限事件数量，并按稳定主题分节。
 - **Do** 使用 44px 最小交互高度、2px 可见焦点轮廓和文字状态标签。
 - **Do** 先展示事件结论、新变化、证据状态和未知项，再提供原始文章入口。
 - **Do** 使用 Signal Surface、Quiet Surface 和 1px Inset Boundary 建立高密度但可扫描的层级。
+- **Do** 用 Canvas → Recessed Workspace → Focus Pane 的背景步进表达页面层级，让圆角只承担交互或浮层语义。
 - **Do** 在 `prefers-reduced-motion` 下取消位移、旋转和非必要过渡，同时保留状态变化。
 
 ### Don't:
@@ -242,4 +250,5 @@ components:
 - **Don't** 让来源文章标题压过事件结论，也不要把文章数量误当作事件重要性。
 - **Don't** 给静态事件卡添加外投影；如果卡片看起来漂浮，层级就已经过度。
 - **Don't** 给相连窗格、正文或连续列表中的每一行重复添加大圆角；结构层与内容层必须使用不同的形状语言。
+- **Don't** 把进度、摘要、证据行和表单区默认包装成圆角卡片；标题、留白和分隔线应先承担分组职责。
 - **Don't** 用颜色单独表达确认、纠正、争议或选中状态；必须同时提供文本或结构差异。

@@ -12,7 +12,9 @@ mod llm;
 mod models;
 mod net;
 mod opml;
+mod osint;
 mod push;
+mod retention;
 mod routes;
 mod search;
 mod security;
@@ -95,6 +97,17 @@ async fn main() -> anyhow::Result<()> {
             tracing::info!(processed, "event wire agent turn completed");
             Ok(())
         }
+        "prune-retention" => {
+            let stats = retention::run_once(&state).await?;
+            tracing::info!(
+                articles = stats.articles,
+                stories = stats.stories,
+                worker_jobs = stats.worker_jobs,
+                event_agent_runs = stats.event_agent_runs,
+                "content retention completed"
+            );
+            Ok(())
+        }
         other => anyhow::bail!("unknown command: {other}"),
     }
 }
@@ -125,6 +138,7 @@ async fn build_state(config: Arc<Config>, start_worker: bool) -> anyhow::Result<
     if start_worker {
         worker::spawn_worker(state.clone(), worker_rx);
         event_agent::spawn(state.clone());
+        retention::spawn(state.clone());
     }
     Ok(state)
 }

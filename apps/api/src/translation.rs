@@ -8,8 +8,10 @@ use crate::{
 };
 
 pub(crate) const PROMPT_VERSION: &str = "translation-v3";
+pub(crate) const SELECTION_MAX_INPUT_CHARS: usize = 4_000;
 const MAX_RESPONSE_BYTES: usize = 2 * 1024 * 1024;
 const TITLE_MAX_OUTPUT_TOKENS: u32 = 512;
+const SELECTION_MAX_OUTPUT_TOKENS: u32 = 4_096;
 
 #[derive(Debug, Serialize)]
 struct ChatRequest {
@@ -112,6 +114,46 @@ pub async fn translate_title(
             .min(TITLE_MAX_OUTPUT_TOKENS),
     )
     .await
+}
+
+pub async fn translate_selection(
+    config: &Config,
+    http: &reqwest::Client,
+    text: &str,
+    source_language: Option<&str>,
+    target_language: &str,
+) -> AppResult<String> {
+    let text = validate_selection_text(text)?;
+    if config.translation_api_key.trim().is_empty() {
+        return Err(AppError::PermanentUpstream(
+            "翻译服务尚未配置 API Key".to_string(),
+        ));
+    }
+    translate_text(
+        config,
+        http,
+        text,
+        source_language,
+        target_language,
+        config
+            .translation_max_output_tokens
+            .min(SELECTION_MAX_OUTPUT_TOKENS),
+    )
+    .await
+}
+
+fn validate_selection_text(text: &str) -> AppResult<&str> {
+    let text = text.trim();
+    if text.is_empty() {
+        return Err(AppError::BadRequest("请选择需要翻译的文字".to_string()));
+    }
+    let chars = text.chars().count();
+    if chars > SELECTION_MAX_INPUT_CHARS {
+        return Err(AppError::BadRequest(format!(
+            "选中文字过长（{chars} 字符），单次最多 {SELECTION_MAX_INPUT_CHARS} 字符"
+        )));
+    }
+    Ok(text)
 }
 
 pub async fn translate_article(
@@ -361,6 +403,23 @@ fn clip_chars(value: &str, limit: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn selection_text_validation_trims_and_bounds_input() {
+        assert_eq!(
+            validate_selection_text("  Hello world  ").unwrap(),
+            "Hello world"
+        );
+        assert!(matches!(
+            validate_selection_text("  "),
+            Err(AppError::BadRequest(message)) if message.contains("请选择")
+        ));
+        let oversized = "界".repeat(SELECTION_MAX_INPUT_CHARS + 1);
+        assert!(matches!(
+            validate_selection_text(&oversized),
+            Err(AppError::BadRequest(message)) if message.contains("单次最多 4000 字符")
+        ));
+    }
 
     #[test]
     fn generic_openai_request_uses_max_completion_tokens() {

@@ -105,7 +105,8 @@ pub async fn refresh_story_clusters_after_source_change(
         sqlx::query(
             "DELETE FROM story_clusters sc
              WHERE sc.id = ANY($1)
-               AND NOT EXISTS (SELECT 1 FROM articles a WHERE a.story_id = sc.id)",
+               AND NOT EXISTS (SELECT 1 FROM articles a WHERE a.story_id = sc.id)
+               AND NOT EXISTS (SELECT 1 FROM event_feedback ef WHERE ef.story_id = sc.id)",
         )
         .bind(story_ids)
         .execute(&mut **transaction)
@@ -1001,7 +1002,8 @@ async fn refresh_story_cluster(
         sqlx::query(
             "DELETE FROM story_clusters sc
              WHERE sc.id = $1
-               AND NOT EXISTS (SELECT 1 FROM articles a WHERE a.story_id = sc.id)",
+               AND NOT EXISTS (SELECT 1 FROM articles a WHERE a.story_id = sc.id)
+               AND NOT EXISTS (SELECT 1 FROM event_feedback ef WHERE ef.story_id = sc.id)",
         )
         .bind(story_id)
         .execute(&mut **transaction)

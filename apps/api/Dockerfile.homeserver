@@ -34,7 +34,8 @@ COPY apps/api/Cargo.toml apps/api/Cargo.toml
 COPY apps/api apps/api
 RUN --mount=type=cache,id=rss-hub-reader-cargo-registry-v1,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,id=rss-hub-reader-api-target-v1,target=/app/target,sharing=locked \
-    cargo build --release -p rss-hub-reader-api \
+    touch apps/api/src/main.rs \
+    && cargo build --release -p rss-hub-reader-api \
     && mkdir -p /out \
     && cp /app/target/release/rss-hub-reader-api /out/rss-hub-reader-api
 

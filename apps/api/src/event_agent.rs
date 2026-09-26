@@ -13,6 +13,7 @@ use crate::{
     config::Config,
     error::{AppError, AppResult},
     extractor::best_article_text,
+    feeds::hash_url,
     intelligence::{hash_content, publisher_family},
     llm::{
         EVENT_TITLE_TRANSLATION_PROMPT_VERSION, GeneratedSummary, SummarySource,
@@ -23,7 +24,7 @@ use crate::{
 };
 
 const EVENT_AGENT_LOCK_KEY: i64 = 0x5253_5345_564e_5401;
-const PROMPT_VERSION: &str = "event-wire-agent-v9";
+const PROMPT_VERSION: &str = "event-wire-agent-v10";
 const MIN_WIRE_SOURCE_QUALITY: i32 = 70;
 static DEDICATED_TITLE_TRANSLATION_DISABLED: AtomicBool = AtomicBool::new(false);
 
@@ -775,7 +776,8 @@ async fn load_event_materials(
          WHERE a.story_id = $1 AND COALESCE(sf.muted, false) = false
          ORDER BY COALESCE(a.id = $2, false) DESC,
                   (a.title = $3) DESC,
-                  f.quality_score DESC, a.quality_score DESC,
+                  LEAST(100, GREATEST(0, f.quality_score + COALESCE(sf.weight, 0))) DESC,
+                  a.quality_score DESC,
                   COALESCE(a.published_at, a.fetched_at) DESC,
                   a.id
          LIMIT 30",
@@ -788,11 +790,13 @@ async fn load_event_materials(
     let mut materials = Vec::new();
     let mut feed_ids = HashSet::new();
     let mut content_hashes = HashSet::new();
+    let mut url_hashes = HashSet::new();
     let mut source_families = HashSet::new();
     for row in rows {
         let feed_id = row.get::<Uuid, _>("feed_id");
         let content_hash = row.get::<String, _>("content_hash");
         let url = row.get::<String, _>("url");
+        let url_hash = hash_url(&url);
         let site_url = row.get::<Option<String>, _>("site_url");
         let feed_url = row.get::<String, _>("feed_url");
         let hub_adapter = row.get::<Option<String>, _>("hub_adapter");
@@ -805,6 +809,7 @@ async fn load_event_materials(
         );
         if feed_ids.contains(&feed_id)
             || content_hashes.contains(&content_hash)
+            || url_hashes.contains(&url_hash)
             || source_families.contains(&source_family)
         {
             continue;
@@ -820,6 +825,7 @@ async fn load_event_materials(
         }
         feed_ids.insert(feed_id);
         content_hashes.insert(content_hash.clone());
+        url_hashes.insert(url_hash);
         source_families.insert(source_family.clone());
         materials.push(EventMaterial {
             source: SummarySource {

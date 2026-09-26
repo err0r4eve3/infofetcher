@@ -18,7 +18,7 @@ use crate::{
     intelligence::{
         article_quality_score, assign_story_cluster, detect_language, hash_content,
         lock_story_generation_for_article_write, lock_story_generation_for_metadata_write,
-        refresh_stories_for_feed_change,
+        publisher_family, refresh_stories_for_feed_change,
     },
     keywords,
     llm::{SummarySource, summarize_sources},
@@ -47,11 +47,12 @@ struct WorkerJob {
     max_attempts: i32,
 }
 
+#[derive(Clone)]
 struct SummaryMaterial {
     source: SummarySource,
     feed_id: Uuid,
     content_hash: String,
-    source_family: Option<String>,
+    source_family: String,
 }
 
 const WORKER_ADVISORY_LOCK_KEY: i64 = 0x5253_5348_5542_0001;
@@ -1280,7 +1281,7 @@ async fn load_summary_materials(
     let row = sqlx::query(
         "SELECT a.id, a.feed_id, a.story_id, a.title, a.url, a.content_hash,
                 a.content, a.extracted_content,
-                f.title AS source_title
+                f.title AS source_title, f.site_url, f.feed_url, f.hub_adapter, f.hub_path
          FROM articles a
          JOIN feeds f ON f.id = a.feed_id
          WHERE a.id = $1",
@@ -1291,20 +1292,20 @@ async fn load_summary_materials(
     .ok_or(AppError::NotFound)?;
     let story_id = row.get::<Option<Uuid>, _>("story_id");
     let primary = summary_material_from_row(&row);
-    let mut materials = vec![primary];
-
     let Some(story_id) = story_id else {
-        return Ok(materials);
+        return Ok(vec![primary]);
     };
     let rows = sqlx::query(
         "SELECT a.id, a.feed_id, a.title, a.url, a.content_hash,
                 a.content, a.extracted_content,
-                f.title AS source_title
+                f.title AS source_title, f.site_url, f.feed_url, f.hub_adapter, f.hub_path
          FROM articles a
          JOIN feeds f ON f.id = a.feed_id
+         LEFT JOIN source_feedback sf ON sf.feed_id = f.id
          WHERE a.story_id = $1 AND a.id <> $2
-         ORDER BY a.quality_score DESC, f.quality_score DESC,
-                  COALESCE(a.published_at, a.fetched_at) DESC
+           AND COALESCE(sf.muted, false) = false
+         ORDER BY LEAST(100, GREATEST(0, f.quality_score + COALESCE(sf.weight, 0))) DESC,
+                  a.quality_score DESC, COALESCE(a.published_at, a.fetched_at) DESC, a.id
          LIMIT 24",
     )
     .bind(story_id)
@@ -1312,46 +1313,41 @@ async fn load_summary_materials(
     .fetch_all(&state.pool)
     .await?;
 
+    Ok(select_summary_materials(
+        primary,
+        rows.iter().map(summary_material_from_row),
+    ))
+}
+
+fn select_summary_materials(
+    primary: SummaryMaterial,
+    candidates: impl IntoIterator<Item = SummaryMaterial>,
+) -> Vec<SummaryMaterial> {
+    let mut materials = vec![primary];
     let mut feed_ids = HashSet::from([materials[0].feed_id]);
     let mut content_hashes = HashSet::from([materials[0].content_hash.clone()]);
-    let mut source_families = materials[0]
-        .source_family
-        .clone()
-        .into_iter()
-        .collect::<HashSet<_>>();
-    for row in rows {
-        let feed_id = row.get::<Uuid, _>("feed_id");
-        let content_hash = row.get::<String, _>("content_hash");
-        let url = row.get::<String, _>("url");
-        let source_family = source_family(&url);
-        if feed_ids.contains(&feed_id)
-            || content_hashes.contains(&content_hash)
-            || source_family
-                .as_ref()
-                .is_some_and(|family| source_families.contains(family))
+    let mut url_hashes = HashSet::from([hash_url(&materials[0].source.url)]);
+    let mut source_families = HashSet::from([materials[0].source_family.clone()]);
+    for material in candidates {
+        let url_hash = hash_url(&material.source.url);
+        if feed_ids.contains(&material.feed_id)
+            || content_hashes.contains(&material.content_hash)
+            || url_hashes.contains(&url_hash)
+            || source_families.contains(&material.source_family)
+            || material.source.content.trim().is_empty()
         {
             continue;
         }
-        let content = best_article_text(
-            &row.get::<String, _>("title"),
-            &row.get::<String, _>("content"),
-            &row.get::<String, _>("extracted_content"),
-        );
-        if content.trim().is_empty() {
-            continue;
-        }
-        let material = summary_material_from_row(&row);
-        feed_ids.insert(feed_id);
-        content_hashes.insert(content_hash);
-        if let Some(family) = &source_family {
-            source_families.insert(family.clone());
-        }
+        feed_ids.insert(material.feed_id);
+        content_hashes.insert(material.content_hash.clone());
+        url_hashes.insert(url_hash);
+        source_families.insert(material.source_family.clone());
         materials.push(material);
         if materials.len() >= 5 {
             break;
         }
     }
-    Ok(materials)
+    materials
 }
 
 fn summary_material_from_row(row: &sqlx::postgres::PgRow) -> SummaryMaterial {
@@ -1367,38 +1363,45 @@ fn summary_material_from_row(row: &sqlx::postgres::PgRow) -> SummaryMaterial {
             article_id: row.get("id"),
             source_title: row.get("source_title"),
             article_title: title,
-            url: url.clone(),
+            url,
             content,
         },
         feed_id: row.get("feed_id"),
         content_hash: row.get("content_hash"),
-        source_family: source_family(&url),
+        source_family: publisher_family(
+            row.get::<Option<&str>, _>("site_url"),
+            row.get::<&str, _>("feed_url"),
+            row.get::<Option<&str>, _>("hub_adapter"),
+            row.get::<Option<&str>, _>("hub_path"),
+        ),
     }
 }
 
-fn source_family(url: &str) -> Option<String> {
-    reqwest::Url::parse(url)
-        .ok()
-        .and_then(|url| url.host_str().map(str::to_ascii_lowercase))
-        .map(|host| host.strip_prefix("www.").unwrap_or(&host).to_string())
+fn summary_material_signature(material: &SummaryMaterial) -> String {
+    serde_json::json!([
+        material.source.article_id,
+        material.feed_id,
+        material.source_family,
+        material.content_hash,
+        material.source.source_title,
+        material.source.article_title,
+        material.source.url,
+    ])
+    .to_string()
 }
 
 fn summary_materials_hash(materials: &[SummaryMaterial], config: &Config) -> String {
     hash_content(
         &[
             "schema:2".to_string(),
-            "pipeline:grounded-summary-v3".to_string(),
+            "pipeline:grounded-summary-v4".to_string(),
             format!("provider:{}", config.llm_base_url.trim_end_matches('/')),
             format!("model:{}", config.llm_model),
             format!("context_budget:{}", config.llm_context_budget_chars),
             format!("output_budget:{}", config.llm_max_output_tokens),
         ]
         .into_iter()
-        .chain(
-            materials.iter().map(|material| {
-                format!("{}:{}", material.source.article_id, material.content_hash)
-            }),
-        )
+        .chain(materials.iter().map(summary_material_signature))
         .collect::<Vec<_>>()
         .join("\n"),
     )
@@ -1450,6 +1453,92 @@ pub async fn reindex_all(state: &AppState) -> AppResult<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn summary_selection_preserves_primary_and_distinct_publishers() {
+        let material = |id, family: &str, content: &str| SummaryMaterial {
+            source: SummarySource {
+                article_id: Uuid::from_u128(id),
+                source_title: family.into(),
+                article_title: "An event".into(),
+                url: format!("https://articles.example/{id}"),
+                content: content.into(),
+            },
+            feed_id: Uuid::from_u128(id),
+            content_hash: hash_content(content),
+            source_family: family.into(),
+        };
+        let primary = material(1, "publisher.example", "The requested article");
+        let mut same_feed = material(4, "other.example", "Another article on the same feed");
+        same_feed.feed_id = primary.feed_id;
+        let mut same_url = material(
+            7,
+            "aggregator.example",
+            "A shortened copy of the primary article",
+        );
+        same_url.source.url = format!("{}?utm_source=feed#summary", primary.source.url);
+        let candidates = [
+            material(
+                2,
+                "publisher.example",
+                "Same publisher, different feed and article URL",
+            ),
+            material(3, "copy.example", "The requested article"),
+            same_feed,
+            same_url,
+            material(5, "empty.example", "  "),
+            material(6, "independent.example", "An independently written account"),
+        ];
+        let selected = select_summary_materials(primary.clone(), candidates);
+        assert_eq!(
+            selected
+                .iter()
+                .map(|m| m.source.article_id.as_u128())
+                .collect::<Vec<_>>(),
+            vec![1, 6]
+        );
+        let selected = select_summary_materials(
+            primary,
+            (10..20).map(|id| {
+                material(
+                    id,
+                    &format!("publisher{id}.example"),
+                    &format!("Report {id}"),
+                )
+            }),
+        );
+        assert_eq!(selected.len(), 5);
+        assert_eq!(selected[0].source.article_id.as_u128(), 1);
+    }
+
+    #[test]
+    fn summary_snapshot_changes_when_citation_metadata_changes() {
+        let material = SummaryMaterial {
+            source: SummarySource {
+                article_id: Uuid::from_u128(1),
+                source_title: "Publisher".into(),
+                article_title: "Original headline".into(),
+                url: "https://publisher.example/original".into(),
+                content: "Evidence".into(),
+            },
+            feed_id: Uuid::from_u128(2),
+            content_hash: hash_content("Evidence"),
+            source_family: "publisher.example".into(),
+        };
+        let original = summary_material_signature(&material);
+        let mut changed = material.clone();
+        changed.source.article_title = "Corrected headline".into();
+        assert_ne!(summary_material_signature(&changed), original);
+        let mut changed = material.clone();
+        changed.source.url = "https://publisher.example/correction".into();
+        assert_ne!(summary_material_signature(&changed), original);
+        let mut changed = material.clone();
+        changed.source.source_title = "Renamed publisher".into();
+        assert_ne!(summary_material_signature(&changed), original);
+        let mut changed = material.clone();
+        changed.source_family = "new-publisher.example".into();
+        assert_ne!(summary_material_signature(&changed), original);
+    }
 
     #[test]
     fn selects_internal_hub_source_only_for_complete_pairs() {

@@ -100,6 +100,21 @@ pub struct TranslationRequest {
     pub target_language: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SelectionTranslationRequest {
+    pub text: String,
+    pub source_language: Option<String>,
+    #[serde(default = "default_translation_target")]
+    pub target_language: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SelectionTranslationResponse {
+    pub translation: String,
+    pub target_language: String,
+    pub model: String,
+}
+
 fn default_translation_target() -> String {
     "zh-Hans".to_string()
 }

@@ -81,73 +81,15 @@ pub async fn require_session(pool: &PgPool, headers: &HeaderMap) -> AppResult<St
         .ok_or(AppError::Unauthorized)
 }
 
-pub async fn verify_credentials(
-    pool: &PgPool,
-    config: &Config,
-    username: &str,
-    password: &str,
-) -> AppResult<bool> {
-    let active_username = active_username(pool, config).await?;
-    Ok(username == active_username && active_password_matches(pool, config, password).await?)
+pub fn verify_token(config: &Config, token: &str) -> bool {
+    !token.is_empty() && constant_time_eq(&config.auth_token, token)
 }
 
 pub async fn active_username(pool: &PgPool, config: &Config) -> AppResult<String> {
-    Ok(stored_credentials(pool)
-        .await?
-        .map(|(username, _)| username)
-        .unwrap_or_else(|| config.admin_username.clone()))
-}
-
-pub async fn active_password_matches(
-    pool: &PgPool,
-    config: &Config,
-    password: &str,
-) -> AppResult<bool> {
-    if let Some((_, password_hash)) = stored_credentials(pool).await? {
-        return stored_password_matches(pool, &password_hash, password).await;
-    }
-    Ok(constant_time_eq(&config.admin_password, password))
-}
-
-pub async fn save_credentials(pool: &PgPool, username: &str, password: &str) -> AppResult<()> {
-    sqlx::query(
-        "INSERT INTO admin_credentials (id, username, password_hash)
-         VALUES (true, $1, crypt($2, gen_salt('bf')))
-         ON CONFLICT (id) DO UPDATE SET
-           username = EXCLUDED.username,
-           password_hash = crypt($2, gen_salt('bf')),
-           updated_at = now()",
-    )
-    .bind(username)
-    .bind(password)
-    .execute(pool)
-    .await?;
-    Ok(())
-}
-
-#[cfg(test)]
-fn credentials_match(config: &Config, username: &str, password: &str) -> bool {
-    username == config.admin_username && constant_time_eq(password, &config.admin_password)
-}
-
-async fn stored_credentials(pool: &PgPool) -> AppResult<Option<(String, String)>> {
-    let row = sqlx::query("SELECT username, password_hash FROM admin_credentials WHERE id = true")
+    Ok(sqlx::query_scalar::<_, String>("SELECT username FROM admin_credentials WHERE id = true")
         .fetch_optional(pool)
-        .await?;
-    Ok(row.map(|row| (row.get("username"), row.get("password_hash"))))
-}
-
-async fn stored_password_matches(
-    pool: &PgPool,
-    password_hash: &str,
-    password: &str,
-) -> AppResult<bool> {
-    let row = sqlx::query("SELECT crypt($1, $2) = $2")
-        .bind(password)
-        .bind(password_hash)
-        .fetch_one(pool)
-        .await?;
-    Ok(row.get(0))
+        .await?
+        .unwrap_or_else(|| config.admin_username.clone()))
 }
 
 fn hash_token(token: &str) -> String {
@@ -193,15 +135,16 @@ mod tests {
     }
 
     #[test]
-    fn credentials_require_configured_admin() {
+    fn login_requires_exact_token() {
         let config = Config {
             database_url: String::new(),
             app_bind: "127.0.0.1:8080".parse().unwrap(),
             app_public_url: String::new(),
             admin_username: "admin".to_string(),
-            admin_password: "secret".to_string(),
+            auth_token: "secret".to_string(),
             cookie_secure: false,
             session_days: 14,
+            content_retention_days: 7,
             index_dir: ".".into(),
             web_dist_dir: ".".into(),
             fetch_concurrency: 32,
@@ -217,6 +160,7 @@ mod tests {
             llm_max_output_tokens: 0,
             llm_context_budget_chars: 64_000,
             event_agent_enabled: false,
+            osint_searxng_url: None,
             event_agent_interval: std::time::Duration::from_secs(30),
             event_agent_lookback_hours: 24,
             event_agent_max_pending: 12,
@@ -249,8 +193,10 @@ mod tests {
             opencli_feeds: Default::default(),
             web_watches: Default::default(),
         };
-        assert!(credentials_match(&config, "admin", "secret"));
-        assert!(!credentials_match(&config, "admin", "wrong"));
+        assert!(verify_token(&config, "secret"));
+        assert!(!verify_token(&config, "wrong"));
+        assert!(!verify_token(&config, ""));
+        assert!(!verify_token(&config, "secret "));
     }
 
     #[test]

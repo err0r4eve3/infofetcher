@@ -23,6 +23,7 @@ const MIN_BRIEF_SCORE: i32 = 60;
 
 pub fn router() -> Router<AppState> {
     Router::new()
+        .merge(crate::osint::router())
         .route("/api/v2/brief/now", get(now_brief))
         .route("/api/v2/wire/now", get(wire_now))
         .route("/api/v2/events/{id}", get(event_detail))
@@ -45,6 +46,11 @@ struct BriefQuery {
 struct WireQuery {
     hours: Option<i64>,
     limit: Option<i64>,
+}
+
+#[derive(Debug, Deserialize)]
+struct EventDetailQuery {
+    representative_article_id: Option<Uuid>,
 }
 
 #[derive(Debug, Serialize)]
@@ -93,7 +99,8 @@ struct QueueDigestResponse {
 struct BriefResponse {
     generated_at: DateTime<Utc>,
     window_hours: i64,
-    budget_minutes: i32,
+    mode: &'static str,
+    budget_minutes: Option<i32>,
     stats: BriefStats,
     items: Vec<EventBriefItem>,
 }
@@ -110,6 +117,7 @@ struct BriefStats {
 #[derive(Debug, Clone, Serialize)]
 pub struct EventBriefItem {
     event_id: Uuid,
+    report_section: String,
     revision_type: String,
     title: String,
     what_happened: String,
@@ -133,6 +141,8 @@ pub struct EventBriefItem {
     update_count: i32,
     has_grounded_summary: bool,
     feedback: Option<String>,
+    #[serde(skip_serializing)]
+    source_families: Vec<String>,
     #[serde(skip_serializing)]
     community_only: bool,
     #[serde(skip_serializing)]
@@ -205,12 +215,13 @@ struct FeedbackResponse {
     kind: String,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct Candidate {
     event_id: Uuid,
     title: String,
     representative_article_id: Uuid,
     source_titles: Vec<String>,
+    source_families: Vec<String>,
     source_count: i32,
     independent_source_count: i32,
     article_count: i32,
@@ -240,9 +251,14 @@ async fn now_brief(
     Query(query): Query<BriefQuery>,
 ) -> AppResult<Json<BriefResponse>> {
     auth::require_session(&state.pool, &headers).await?;
-    let minutes = normalize_budget(query.minutes.unwrap_or(10));
-    let hours = query.hours.unwrap_or(24).clamp(1, 24 * 30);
-    let limit = budget_limit(minutes);
+    let budget_minutes = query.minutes.map(normalize_budget);
+    let report_mode = budget_minutes.is_none();
+    let hours = if report_mode {
+        normalize_report_hours(query.hours.unwrap_or(12))
+    } else {
+        query.hours.unwrap_or(24).clamp(1, 24 * 30)
+    };
+    let limit = budget_minutes.map_or_else(|| report_limit(hours), budget_limit);
     let watches = enabled_watches(&state).await?;
     let preferences = load_preference_signals(&state).await?;
     let candidates = load_candidates(&state, hours, None).await?;
@@ -269,7 +285,8 @@ async fn now_brief(
     Ok(Json(BriefResponse {
         generated_at: Utc::now(),
         window_hours: hours,
-        budget_minutes: minutes,
+        mode: if report_mode { "report" } else { "brief" },
+        budget_minutes,
         stats: BriefStats {
             candidate_events: candidate_count,
             eligible_events,
@@ -374,15 +391,37 @@ async fn event_detail(
     State(state): State<AppState>,
     headers: HeaderMap,
     Path(id): Path<Uuid>,
+    Query(query): Query<EventDetailQuery>,
 ) -> AppResult<Json<EventDetail>> {
     auth::require_session(&state.pool, &headers).await?;
     let watches = enabled_watches(&state).await?;
     let preferences = load_preference_signals(&state).await?;
-    let candidate = load_candidates(&state, 24 * 365, Some(id))
+    let candidate = match load_candidates(&state, 24 * 365, Some(id))
         .await?
         .into_iter()
         .next()
-        .ok_or(AppError::NotFound)?;
+    {
+        Some(candidate) => candidate,
+        None => {
+            let article_id = query.representative_article_id.ok_or(AppError::NotFound)?;
+            let current_id = sqlx::query_scalar::<_, Uuid>(
+                "SELECT story_id FROM articles WHERE id = $1 AND story_id IS NOT NULL",
+            )
+            .bind(article_id)
+            .fetch_optional(&state.pool)
+            .await?
+            .ok_or(AppError::NotFound)?;
+            if current_id == id {
+                return Err(AppError::NotFound);
+            }
+            load_candidates(&state, 24 * 365, Some(current_id))
+                .await?
+                .into_iter()
+                .next()
+                .ok_or(AppError::NotFound)?
+        }
+    };
+    let id = candidate.event_id;
     let event = score_candidate(candidate, &watches, &preferences);
     let revision_rows = sqlx::query(
         "SELECT id, revision_type, title, source_count, occurred_at, article_id
@@ -565,11 +604,11 @@ async fn load_candidates(
            ORDER BY COALESCE(sc.last_published_at, sc.updated_at) DESC
            LIMIT CASE WHEN $1::uuid IS NULL THEN $3 ELSE 1 END
          ),
-         story_signals AS (
-           SELECT sc.id, sc.representative_title,
-                  GREATEST(sc.source_count, 1) AS source_count,
-                  COUNT(a.id)::integer AS article_count,
-                  COUNT(DISTINCT CASE
+         visible_articles AS (
+           SELECT a.id, a.story_id, a.published_at, a.fetched_at, f.title AS source_title,
+                  LEAST(100, GREATEST(0, f.quality_score + COALESCE(sf.weight, 0)))
+                    AS source_quality,
+                  CASE
                     WHEN f.hub_adapter IS NOT NULL AND f.hub_path IS NOT NULL
                       THEN lower(f.hub_adapter || ':' || f.hub_path)
                     ELSE lower(regexp_replace(
@@ -580,25 +619,35 @@ async fn load_candidates(
                       ),
                       '^www[.]', ''
                     ))
-                  END)::integer AS independent_source_count,
-                  COUNT(*) FILTER (
-                    WHERE COALESCE(a.published_at, a.fetched_at) >= now() - interval '6 hours'
-                  )::integer AS update_count,
-                  ROUND(AVG(LEAST(
-                    100,
-                    GREATEST(0, f.quality_score + COALESCE(sf.weight, 0))
-                  )))::integer AS average_source_quality,
-                  ARRAY_AGG(DISTINCT f.title) AS source_titles,
-                  MAX(COALESCE(a.published_at, a.fetched_at)) AS published_at
+                  END AS source_family
            FROM recent_stories sc
            JOIN articles a ON a.story_id = sc.id
            JOIN feeds f ON f.id = a.feed_id
            LEFT JOIN source_feedback sf ON sf.feed_id = f.id
            WHERE COALESCE(sf.muted, false) = false
              AND ($1::uuid IS NOT NULL OR COALESCE(a.published_at, a.fetched_at) >= now() - ($2 || ' hours')::interval)
+         ),
+         publisher_quality AS (
+           SELECT story_id, source_family, MAX(source_quality) AS quality
+           FROM visible_articles
+           GROUP BY story_id, source_family
+         ),
+         story_signals AS (
+           SELECT sc.id, sc.representative_title,
+                  GREATEST(sc.source_count, 1) AS source_count,
+                  COUNT(a.id)::integer AS article_count,
+                  COUNT(DISTINCT a.source_family)::integer AS independent_source_count,
+                  COUNT(*) FILTER (
+                    WHERE COALESCE(a.published_at, a.fetched_at) >= now() - interval '6 hours'
+                  )::integer AS update_count,
+                  ARRAY_AGG(DISTINCT a.source_title) AS source_titles,
+                  ARRAY_AGG(DISTINCT a.source_family) AS source_families,
+                  MAX(COALESCE(a.published_at, a.fetched_at)) AS published_at
+           FROM recent_stories sc
+           JOIN visible_articles a ON a.story_id = sc.id
            GROUP BY sc.id, sc.representative_title, sc.source_count
          )
-         SELECT ss.*,
+         SELECT ss.*, sq.average_source_quality,
                 rep.id AS representative_article_id,
                 rep.title, rep.content_hash, rep.url_hash,
                 CASE
@@ -612,6 +661,11 @@ async fn load_candidates(
                 ) AS revision_type,
                 ef.kind AS feedback
          FROM story_signals ss
+         JOIN (
+           SELECT story_id, ROUND(AVG(quality))::integer AS average_source_quality
+           FROM publisher_quality
+           GROUP BY story_id
+         ) sq ON sq.story_id = ss.id
          JOIN LATERAL (
            SELECT a.id, a.title, a.extracted_content, a.content,
                   a.content_hash, a.url_hash
@@ -655,6 +709,7 @@ async fn load_candidates(
                 title,
                 representative_article_id: row.get("representative_article_id"),
                 source_titles: row.get("source_titles"),
+                source_families: row.get("source_families"),
                 source_count: row.get("source_count"),
                 independent_source_count: row.get("independent_source_count"),
                 article_count: row.get("article_count"),
@@ -732,7 +787,11 @@ fn score_candidate(
         + confidence as f32 * 0.19
         + relevance as f32 * 0.15)
         .round() as i32;
-    let has_grounded_summary = candidate.summary.is_some();
+    let has_grounded_summary = candidate.grounding_score.is_some()
+        && candidate
+            .summary
+            .as_ref()
+            .is_some_and(|summary| !summary.trim().is_empty());
     let what_happened = candidate
         .summary
         .filter(|summary| !summary.trim().is_empty())
@@ -750,9 +809,11 @@ fn score_candidate(
         candidate.summary_confidence.as_deref(),
     );
     let community_only = sources_are_community_only(&candidate.source_titles);
+    let report_section = report_section(&format!("{} {}", candidate.title, what_happened));
 
     EventBriefItem {
         event_id: candidate.event_id,
+        report_section: report_section.to_string(),
         revision_type: candidate.revision_type,
         title: candidate.title,
         what_happened,
@@ -769,6 +830,7 @@ fn score_candidate(
         source_count: candidate.source_count,
         independent_source_count: candidate.independent_source_count,
         source_titles: sorted_unique(candidate.source_titles),
+        source_families: candidate.source_families,
         watch_ids,
         watch_names,
         representative_article_id: candidate.representative_article_id,
@@ -887,7 +949,7 @@ fn selection_score(item: &EventBriefItem, selected: &[EventBriefItem], limit: us
     }
 
     let normalized_sources = item
-        .source_titles
+        .source_families
         .iter()
         .map(|source| source.trim().to_lowercase())
         .collect::<HashSet<_>>();
@@ -898,7 +960,7 @@ fn selection_score(item: &EventBriefItem, selected: &[EventBriefItem], limit: us
                 selected
                     .iter()
                     .filter(|selected_item| {
-                        selected_item.source_titles.iter().any(|selected_source| {
+                        selected_item.source_families.iter().any(|selected_source| {
                             selected_source.trim().eq_ignore_ascii_case(source)
                         })
                     })
@@ -1232,9 +1294,11 @@ fn topic_bucket(title: &str) -> &'static str {
     .any(|marker| contains_signal_marker(&title, marker))
     {
         "technology"
-    } else if ["market", "economy", "business", "经济", "市场", "公司"]
-        .iter()
-        .any(|marker| contains_signal_marker(&title, marker))
+    } else if [
+        "market", "economy", "business", "bank", "rates", "经济", "市场", "公司", "央行",
+    ]
+    .iter()
+    .any(|marker| contains_signal_marker(&title, marker))
     {
         "business"
     } else if [
@@ -1273,6 +1337,10 @@ fn topic_bucket(title: &str) -> &'static str {
     } else {
         "general"
     }
+}
+
+fn report_section(title: &str) -> &'static str {
+    topic_bucket(title)
 }
 
 pub async fn record_event_revision(
@@ -1459,6 +1527,18 @@ fn budget_limit(minutes: i32) -> usize {
     }
 }
 
+fn normalize_report_hours(hours: i64) -> i64 {
+    if hours <= 12 { 12 } else { 24 }
+}
+
+fn report_limit(hours: i64) -> usize {
+    if normalize_report_hours(hours) == 12 {
+        30
+    } else {
+        48
+    }
+}
+
 fn sorted_unique(mut values: Vec<String>) -> Vec<String> {
     values.sort_by_key(|value| value.to_lowercase());
     values.dedup_by(|left, right| left.eq_ignore_ascii_case(right));
@@ -1517,6 +1597,7 @@ mod tests {
     ) -> EventBriefItem {
         EventBriefItem {
             event_id: Uuid::new_v4(),
+            report_section: report_section(title).to_string(),
             revision_type: "ADD".to_string(),
             title: title.to_string(),
             what_happened: title.to_string(),
@@ -1533,6 +1614,7 @@ mod tests {
             source_count: independent_source_count.max(1),
             independent_source_count,
             source_titles: vec![source_title.to_string()],
+            source_families: vec![source_title.to_lowercase()],
             watch_ids: Vec::new(),
             watch_names: Vec::new(),
             representative_article_id: Uuid::new_v4(),
@@ -1554,6 +1636,25 @@ mod tests {
         assert_eq!(budget_limit(3), 5);
         assert_eq!(budget_limit(10), 12);
         assert_eq!(budget_limit(20), 20);
+    }
+
+    #[test]
+    fn comprehensive_reports_use_half_day_or_full_day_windows() {
+        assert_eq!(normalize_report_hours(1), 12);
+        assert_eq!(normalize_report_hours(12), 12);
+        assert_eq!(normalize_report_hours(18), 24);
+        assert_eq!(normalize_report_hours(72), 24);
+        assert_eq!(report_limit(12), 30);
+        assert_eq!(report_limit(24), 48);
+    }
+
+    #[test]
+    fn report_sections_have_stable_user_facing_labels() {
+        assert_eq!(report_section("AI chip rules changed"), "technology");
+        assert_eq!(report_section("Election date confirmed"), "world");
+        assert_eq!(report_section("Major vulnerability disclosed"), "security");
+        assert_eq!(report_section("Central bank changes rates"), "business");
+        assert_eq!(report_section("A notable cultural event"), "general");
     }
 
     #[test]
@@ -1633,32 +1734,60 @@ mod tests {
 
     #[test]
     fn brief_items_expose_persisted_feedback_state() {
-        let item = score_candidate(
-            Candidate {
-                event_id: Uuid::nil(),
-                title: "A verified event changed".to_string(),
-                representative_article_id: Uuid::nil(),
-                source_titles: vec!["Source".to_string()],
-                source_count: 1,
-                independent_source_count: 1,
-                article_count: 1,
-                update_count: 1,
-                average_source_quality: 80,
-                published_at: Utc::now(),
-                summary: Some("A concise grounded summary".to_string()),
-                summary_confidence: Some("high".to_string()),
-                grounding_score: Some(90),
-                excerpt: "A concise grounded summary".to_string(),
-                revision_type: "UPDATE".to_string(),
-                feedback: Some("known".to_string()),
-                content_hash: "content-known".to_string(),
-                url_hash: "url-known".to_string(),
-            },
-            &[],
-            &[],
-        );
+        let mut candidate = Candidate {
+            event_id: Uuid::nil(),
+            title: "A verified event changed".to_string(),
+            representative_article_id: Uuid::nil(),
+            source_titles: vec!["Source".to_string()],
+            source_families: vec!["source.example".to_string()],
+            source_count: 1,
+            independent_source_count: 1,
+            article_count: 1,
+            update_count: 1,
+            average_source_quality: 80,
+            published_at: Utc::now(),
+            summary: Some("A concise grounded summary".to_string()),
+            summary_confidence: Some("high".to_string()),
+            grounding_score: Some(90),
+            excerpt: "A concise grounded summary".to_string(),
+            revision_type: "UPDATE".to_string(),
+            feedback: Some("known".to_string()),
+            content_hash: "content-known".to_string(),
+            url_hash: "url-known".to_string(),
+        };
+        let item = score_candidate(candidate.clone(), &[], &[]);
 
         assert_eq!(item.feedback.as_deref(), Some("known"));
+        assert!(item.has_grounded_summary);
+        candidate.grounding_score = None;
+        assert!(!score_candidate(candidate.clone(), &[], &[]).has_grounded_summary);
+        candidate.grounding_score = Some(90);
+        candidate.summary = Some("  ".into());
+        assert!(!score_candidate(candidate, &[], &[]).has_grounded_summary);
+    }
+
+    #[test]
+    fn publisher_penalty_uses_identity_instead_of_feed_display_names() {
+        let mut selected =
+            test_brief_item("Election results announced", 80, 80, 80, 80, 1, "BBC World");
+        selected.source_families = vec!["bbc.co.uk".into()];
+        let mut candidate =
+            test_brief_item("New AI model released", 75, 75, 75, 75, 1, "BBC Technology");
+        candidate.source_families = selected.source_families.clone();
+        let repeated = selection_score(&candidate, &[selected.clone()], 12);
+        candidate.source_titles = vec!["Renamed feed".into()];
+        assert_eq!(
+            selection_score(&candidate, &[selected.clone()], 12),
+            repeated
+        );
+        candidate.source_families = vec!["another.example".into()];
+        assert!(selection_score(&candidate, &[selected], 12) > repeated);
+        assert!(
+            serde_json::to_value(candidate)
+                .unwrap()
+                .get("source_families")
+                .is_none()
+        );
     }
 
     #[test]
@@ -1731,6 +1860,7 @@ mod tests {
             title: "AI chip export rules tighten again".to_string(),
             representative_article_id: Uuid::new_v4(),
             source_titles: vec!["World Wire".to_string()],
+            source_families: vec!["wire.example".to_string()],
             source_count: 1,
             independent_source_count: 1,
             article_count: 1,
