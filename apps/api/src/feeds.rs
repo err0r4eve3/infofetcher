@@ -39,7 +39,7 @@ pub async fn discover_feed_url(
     max_bytes: usize,
 ) -> AppResult<String> {
     let mut headers = HeaderMap::new();
-    headers.insert(USER_AGENT, HeaderValue::from_static("rss-hub-reader/0.1"));
+    headers.insert(USER_AGENT, HeaderValue::from_static("infofetcher/0.1"));
     let response = get_with_safe_redirects(http, raw_url, &headers, allow_private).await?;
     if !response.status().is_success() {
         return Err(AppError::Upstream(format!(

@@ -1,7 +1,7 @@
 export default {
   async fetch(request) {
     const upstream = new URL(request.url)
-    upstream.hostname = 'rss-reader.error.moe'
+    upstream.hostname = 'error.moe'
     upstream.protocol = 'https:'
     upstream.port = ''
     try {

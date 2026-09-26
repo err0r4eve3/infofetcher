@@ -170,8 +170,10 @@ type ContentView = 'today' | 'all' | 'monitor'
 type SortMode = 'priority' | 'latest'
 type MobilePane = 'sources' | 'articles' | 'reader'
 
-const READER_LAYOUT_STORAGE_KEY = 'rss-reader-layout-v2'
-const THEME_STORAGE_KEY = 'rss-hub-reader-theme'
+const READER_LAYOUT_STORAGE_KEY = 'infofetcher-reader-layout-v2'
+const THEME_STORAGE_KEY = 'infofetcher-theme'
+const LEGACY_READER_LAYOUT_STORAGE_KEY = 'rss-reader-layout-v2'
+const LEGACY_THEME_STORAGE_KEY = 'rss-hub-reader-theme'
 const DEFAULT_READER_LAYOUT: ReaderLayout = { sidebar: 320, list: 320 }
 const RESIZER_WIDTH = 8
 const READER_SHELL_INLINE_PADDING = 20
@@ -364,6 +366,7 @@ function readInitialTheme(): Theme {
   if (typeof window === 'undefined') return 'light'
   try {
     const storedTheme = window.localStorage.getItem(THEME_STORAGE_KEY)
+      ?? window.localStorage.getItem(LEGACY_THEME_STORAGE_KEY)
     if (storedTheme === 'light' || storedTheme === 'dark') return storedTheme
   } catch {
     // Ignore inaccessible storage and fall back to the system preference.
@@ -399,6 +402,7 @@ function loadReaderLayout(): ReaderLayout {
   if (typeof window === 'undefined') return DEFAULT_READER_LAYOUT
   try {
     const stored = window.localStorage.getItem(READER_LAYOUT_STORAGE_KEY)
+      ?? window.localStorage.getItem(LEGACY_READER_LAYOUT_STORAGE_KEY)
     if (!stored) return DEFAULT_READER_LAYOUT
     const parsed = JSON.parse(stored) as Partial<ReaderLayout>
     if (typeof parsed.sidebar !== 'number' || typeof parsed.list !== 'number') {
@@ -511,7 +515,7 @@ function LoginScreen({
           <div className="brand-line">
             <Rss size={28} />
             <div>
-              <h1>世界信息雷达</h1>
+              <h1>Infofetcher</h1>
             </div>
           </div>
           <ThemeToggle theme={theme} onToggleTheme={onToggleTheme} />

@@ -614,7 +614,7 @@ pub async fn fetch_feed_by_id(state: &AppState, feed_id: Uuid) -> AppResult<()> 
         (hub::render_rss(generated).into_bytes(), None, None)
     } else {
         let mut headers = HeaderMap::new();
-        headers.insert(USER_AGENT, HeaderValue::from_static("rss-hub-reader/0.1"));
+        headers.insert(USER_AGENT, HeaderValue::from_static("infofetcher/0.1"));
         if let Some(etag) = row.get::<Option<String>, _>("etag")
             && let Ok(value) = HeaderValue::from_str(&etag)
         {

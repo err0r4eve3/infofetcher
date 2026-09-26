@@ -1,5 +1,5 @@
 [Unit]
-Description=RSS Hub Reader private X display
+Description=Infofetcher private X display
 After=network-online.target
 
 [Service]

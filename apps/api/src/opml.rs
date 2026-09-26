@@ -100,7 +100,7 @@ pub fn render_opml(feeds: &[(String, String, Option<String>)]) -> String {
     format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>
 <opml version="2.0">
-  <head><title>RSS Hub Reader Export</title></head>
+  <head><title>Infofetcher Export</title></head>
   <body>
 {outlines}
   </body>

@@ -5,4 +5,4 @@ resolver = "2"
 [workspace.package]
 edition = "2024"
 license = "MIT"
-repository = "local"
+repository = "https://github.com/err0r4eve3/infofetcher"

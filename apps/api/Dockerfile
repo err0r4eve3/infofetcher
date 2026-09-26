@@ -12,13 +12,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends pkg-config ca-c
 COPY Cargo.toml Cargo.lock* ./
 COPY apps/api/Cargo.toml apps/api/Cargo.toml
 COPY apps/api apps/api
-RUN cargo build --release -p rss-hub-reader-api
+RUN cargo build --release -p infofetcher-api
 
 FROM debian:bookworm-slim
 WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates && rm -rf /var/lib/apt/lists/*
-COPY --from=api /app/target/release/rss-hub-reader-api /usr/local/bin/rss-hub-reader-api
+COPY --from=api /app/target/release/infofetcher-api /usr/local/bin/infofetcher-api
 COPY --from=web /app/apps/web/dist /app/apps/web/dist
 ENV WEB_DIST_DIR=/app/apps/web/dist
 EXPOSE 8080
-CMD ["rss-hub-reader-api", "serve"]
+CMD ["infofetcher-api", "serve"]

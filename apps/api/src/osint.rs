@@ -228,6 +228,11 @@ async fn capture(
     Json(request): Json<CaptureRequest>,
 ) -> AppResult<Json<Value>> {
     auth::require_session(&state.pool, &headers).await?;
+    if request.include_archive {
+        return Err(AppError::BadRequest(
+            "第三方存档查询已停用，请使用本地证据导出".into(),
+        ));
+    }
     let mut tx = state.pool.begin().await?;
     let locked: bool =
         sqlx::query_scalar("SELECT pg_try_advisory_xact_lock(hashtextextended($1, 0))")
@@ -270,11 +275,7 @@ async fn capture(
     details["article_title"] = json!(row.get::<String, _>("title"));
     details["source_title"] = json!(row.get::<String, _>("source_title"));
     details["reported_published_at"] = json!(row.get::<Option<DateTime<Utc>>, _>("published_at"));
-    details["archive"] = if request.include_archive {
-        lookup_archive(&http, &url, row.get("published_at")).await
-    } else {
-        json!({"status": "not_requested"})
-    };
+    details["archive"] = json!({"status": "not_requested"});
     let sha256 = hex::encode(Sha256::digest(&body));
     let id: Uuid = sqlx::query_scalar(
         "INSERT INTO osint_captures (article_id, story_id, captured_at, sha256, body, details)
@@ -312,7 +313,7 @@ async fn fetch_evidence(http: &reqwest::Client, url: &str) -> AppResult<(Vec<u8>
     let headers = HeaderMap::from_iter([
         (
             header::USER_AGENT,
-            "rss-hub-reader/0.1 (OSINT evidence capture)"
+            "infofetcher/0.1 (OSINT evidence capture)"
                 .parse()
                 .unwrap(),
         ),
@@ -398,60 +399,6 @@ fn page_metadata(body: &[u8], base: &Url) -> Value {
     json!({"declared_canonical_url": canonical, "declared_published_at": published, "outbound_links": links})
 }
 
-async fn lookup_archive(
-    http: &reqwest::Client,
-    url: &str,
-    published_at: Option<DateTime<Utc>>,
-) -> Value {
-    let mut endpoint = Url::parse("https://archive.org/wayback/available").unwrap();
-    endpoint.query_pairs_mut().append_pair("url", url);
-    if let Some(time) = published_at {
-        endpoint
-            .query_pairs_mut()
-            .append_pair("timestamp", &time.format("%Y%m%d%H%M%S").to_string());
-    }
-    let result = async {
-        let response =
-            net::get_with_safe_redirects(http, endpoint.as_str(), &HeaderMap::new(), false).await?;
-        if !response.status().is_success() {
-            return Err(AppError::Upstream("archive unavailable".into()));
-        }
-        let body = net::read_response_limited(response, 65_536).await?;
-        let value: Value = serde_json::from_slice(&body).map_err(|e| AppError::Anyhow(e.into()))?;
-        archive_result(&value)
-    };
-    match tokio::time::timeout(Duration::from_secs(10), result).await {
-        Ok(Ok(value)) => value,
-        _ => json!({"status": "unavailable", "checked_at": Utc::now()}),
-    }
-}
-
-fn archive_result(value: &Value) -> AppResult<Value> {
-    let snapshots = value
-        .get("archived_snapshots")
-        .and_then(Value::as_object)
-        .ok_or_else(|| AppError::Upstream("archive response invalid".into()))?;
-    let Some(closest) = snapshots.get("closest") else {
-        return Ok(json!({"status": "not_found", "checked_at": Utc::now()}));
-    };
-    let mut url = checked_url(closest["url"].as_str().unwrap_or(""))?;
-    let timestamp = closest["timestamp"].as_str().unwrap_or("");
-    if closest["available"] != true
-        || closest["status"] != "200"
-        || url.host_str() != Some("web.archive.org")
-        || url.port().is_some()
-        || timestamp.len() != 14
-        || !timestamp.bytes().all(|v| v.is_ascii_digit())
-        || !url.path().starts_with(&format!("/web/{timestamp}/"))
-    {
-        return Err(AppError::Upstream("archive response invalid".into()));
-    }
-    let _ = url.set_scheme("https");
-    Ok(
-        json!({"status": "found", "url": url.as_str(), "timestamp": timestamp, "checked_at": Utc::now()}),
-    )
-}
-
 async fn export_capture(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -532,7 +479,7 @@ mod tests {
     }
 
     #[test]
-    fn page_and_archive_metadata_are_untrusted_and_bounded() {
+    fn page_metadata_is_untrusted_and_bounded() {
         let body = br#"<link rel="canonical" href="/original"><meta property="article:published_time" content="2026-09-08T00:00:00Z">
             <article><a href="https://record.test/1">Original record</a><a href="javascript:alert(1)">Bad</a>
             <a href="https://user:secret@record.test/2">Bad</a><a href="/same-site">Local</a>
@@ -542,22 +489,6 @@ mod tests {
         assert_eq!(page["outbound_links"].as_array().unwrap().len(), 1);
         assert!(checked_url("file:///etc/passwd").is_err());
         assert!(checked_url("https://user:secret@example.com").is_err());
-        assert_eq!(
-            archive_result(&json!({"archived_snapshots": {}})).unwrap()["status"],
-            "not_found"
-        );
-        assert!(archive_result(&json!({"error": "rate limited"})).is_err());
-        let mut archive = json!({"archived_snapshots": {"closest": {"available": true, "status": "200",
-            "url": "http://web.archive.org/web/20260908000000/https://news.test/story", "timestamp": "20260908000000"}}});
-        assert!(
-            archive_result(&archive).unwrap()["url"]
-                .as_str()
-                .unwrap()
-                .starts_with("https://web.archive.org/")
-        );
-        archive["archived_snapshots"]["closest"]["url"] =
-            json!("https://evil.test/web/20260908000000/https://news.test/story");
-        assert!(archive_result(&archive).is_err());
     }
 
     #[tokio::test]

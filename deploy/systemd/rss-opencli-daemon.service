@@ -1,5 +1,5 @@
 [Unit]
-Description=RSS Hub Reader OpenCLI browser bridge daemon
+Description=Infofetcher OpenCLI browser bridge daemon
 After=network-online.target
 Wants=network-online.target
 

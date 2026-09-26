@@ -185,7 +185,7 @@ impl HubAdapter for Echo {
         Ok(HubFeed {
             title: format!("Echo {label}"),
             link: "https://example.com".to_string(),
-            description: "RSS Hub Reader echo adapter".to_string(),
+            description: "Infofetcher echo adapter".to_string(),
             items: vec![HubItem {
                 title: format!("Echo item for {label}"),
                 link: "https://example.com/echo".to_string(),
@@ -228,7 +228,7 @@ impl HubAdapter for GithubReleases {
         let url = format!("https://api.github.com/repos/{owner}/{repo}/releases?per_page=20");
         let releases = http
             .get(&url)
-            .header(reqwest::header::USER_AGENT, "rss-hub-reader/0.1")
+            .header(reqwest::header::USER_AGENT, "infofetcher/0.1")
             .send()
             .await?
             .error_for_status()?
@@ -569,7 +569,7 @@ async fn get_bytes(
     let mut headers = reqwest::header::HeaderMap::new();
     headers.insert(
         reqwest::header::USER_AGENT,
-        reqwest::header::HeaderValue::from_static("rss-hub-reader/0.1"),
+        reqwest::header::HeaderValue::from_static("infofetcher/0.1"),
     );
     if let Ok(value) = reqwest::header::HeaderValue::from_str(accept) {
         headers.insert(reqwest::header::ACCEPT, value);
@@ -1207,7 +1207,6 @@ printf '%s' '[{"uri":"at://did:plc:test/app.bsky.feed.post/record-1","text":"Blu
             llm_max_output_tokens: 0,
             llm_context_budget_chars: 64_000,
             event_agent_enabled: false,
-            osint_searxng_url: None,
             event_agent_interval: Duration::from_secs(30),
             event_agent_lookback_hours: 24,
             event_agent_max_pending: 12,

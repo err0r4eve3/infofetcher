@@ -1,5 +1,5 @@
 ---
-name: RSS Hub Reader
+name: Infofetcher
 description: A calm, verifiable signal desk for the world's meaningful changes.
 colors:
   graphite-canvas: "oklch(0.95 0.006 250)"
@@ -88,7 +88,7 @@ components:
     height: "24px"
 ---
 
-# Design System: RSS Hub Reader
+# Design System: Infofetcher
 
 ## Overview
 

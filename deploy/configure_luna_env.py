@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Atomically configure an rss-hub-reader environment for the Luna gateway."""
+"""Atomically configure an infofetcher environment for the Luna gateway."""
 
 from __future__ import annotations
 

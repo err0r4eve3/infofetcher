@@ -124,7 +124,7 @@ pub async fn read_response_limited(mut response: Response, limit: usize) -> AppR
     Ok(bytes)
 }
 
-pub(crate) fn ip_is_private_or_reserved(ip: IpAddr) -> bool {
+fn ip_is_private_or_reserved(ip: IpAddr) -> bool {
     match ip {
         IpAddr::V4(ip) => ipv4_is_private_or_reserved(ip),
         IpAddr::V6(ip) => ipv6_is_private_or_reserved(ip),

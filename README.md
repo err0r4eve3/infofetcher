@@ -1,4 +1,4 @@
-# 世界信息雷达
+# Infofetcher
 
 自托管、事件与变化驱动的世界信息入口。RSS、ActivityPub、RSSHub 和 OpenCLI 是采集层；用户面对的是有限简报、事件 Ledger、Watch 和可回溯证据。后端使用 Rust `axum`、Postgres、Tantivy 和持久化 worker；前端使用 React/Vite/TypeScript。
 
@@ -19,14 +19,14 @@
 - 按需文章翻译，使用独立的 OpenAI-compatible 配置、非思考模式和持久化译文，不覆盖原文。
 - 关键词检测规则，支持按订阅/分类选择目标、记录命中，并批量触发 AI 总结或 Telegram 推送。
 - OPML 导入/导出。
-- 按需 OSINT 调查 Agent：GDELT / SearXNG 检索补证、公开原文读取、同源去重、主张核验、调查过程与 JSON 导出，见 [工具选型与配置](docs/OSINT_RESEARCH.md)。
+- 自研本地 OSINT 调查 Agent：站内检索、来源分组、疑似转载识别、数字与更正线索、时间核对及 JSON 导出，无需第三方检索或模型接口，见 [实现与边界](docs/OSINT_RESEARCH.md)。
 
 ## 本地开发
 
 ```bash
 cp .env.example .env
 docker compose up -d postgres
-cargo run -p rss-hub-reader-api
+cargo run -p infofetcher-api
 npm install
 npm run dev:web
 ```
@@ -44,7 +44,7 @@ docker compose up --build
 
 打开 `http://localhost:8080`。必须配置 `AUTH_TOKEN`；缺失或格式不合法时服务拒绝启动。旧用户名/密码不再用于登录，`ADMIN_USERNAME` 仅保留内部数据归属。token 只在登录时提交，后续请求使用 HttpOnly 会话 cookie。更换 token 后重启 API；若要立即撤销已登录设备，还需清空 `sessions` 表。
 
-默认 `CONTENT_RETENTION_DAYS=365`。服务每 6 小时分批清理超过 365 天且未收藏的文章，以及关联摘要、翻译、关键词命中、事件材料和已完成任务，再同步删除全文索引文档。订阅、账号、Watch、反馈偏好和显式收藏不随内容轮换删除；也可以手动运行 `rss-hub-reader-api prune-retention`。
+默认 `CONTENT_RETENTION_DAYS=365`。服务每 6 小时分批清理超过 365 天且未收藏的文章，以及关联摘要、翻译、关键词命中、事件材料和已完成任务，再同步删除全文索引文档。订阅、账号、Watch、反馈偏好和显式收藏不随内容轮换删除；也可以手动运行 `infofetcher-api prune-retention`。
 
 ## 信息质量与排序
 
@@ -115,7 +115,7 @@ ARTICLE_FETCH_COOKIES_JSON='{"www.nodeseek.com":"session=...; cf_clearance=..."}
 ```bash
 BROWSER_FETCH_ENABLED=true
 BROWSER_FETCH_BIN=chromium
-BROWSER_FETCH_USER_DATA_DIR=/var/lib/rss-hub-reader/chrome-profile
+BROWSER_FETCH_USER_DATA_DIR=/var/lib/infofetcher/chrome-profile
 BROWSER_FETCH_TIMEOUT_SECONDS=45
 BROWSER_FETCH_WAIT_MS=5000
 ```
@@ -200,14 +200,14 @@ TELEGRAM_CHAT_ID=123456789
 ## 运维命令
 
 ```bash
-cargo run -p rss-hub-reader-api -- fetch-once
-cargo run -p rss-hub-reader-api -- reindex
-cargo run -p rss-hub-reader-api -- rebuild-intelligence
+cargo run -p infofetcher-api -- fetch-once
+cargo run -p infofetcher-api -- reindex
+cargo run -p infofetcher-api -- rebuild-intelligence
 RECLUSTER_HOURS=36 RECLUSTER_MIN_FEED_QUALITY=60 \
-  cargo run -p rss-hub-reader-api -- recluster-recent
+  cargo run -p infofetcher-api -- recluster-recent
 RECLUSTER_ARTICLE_ID=<article-uuid> \
-  cargo run -p rss-hub-reader-api -- recluster-article
-cargo run -p rss-hub-reader-api -- serve
+  cargo run -p infofetcher-api -- recluster-article
+cargo run -p infofetcher-api -- serve
 ```
 
 ## 验证

@@ -66,7 +66,7 @@ pub async fn maybe_subscribe(state: &AppState, feed_id: Uuid) -> AppResult<bool>
             reqwest::header::CONTENT_TYPE,
             "application/x-www-form-urlencoded",
         )
-        .header(reqwest::header::USER_AGENT, "rss-hub-reader/0.1")
+        .header(reqwest::header::USER_AGENT, "infofetcher/0.1")
         .body(body)
         .send()
         .await?;

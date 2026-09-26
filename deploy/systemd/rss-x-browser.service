@@ -1,5 +1,5 @@
 [Unit]
-Description=RSS Hub Reader authenticated X browser
+Description=Infofetcher authenticated X browser
 After=network-online.target rss-opencli-daemon.service rss-x-display.service
 Requires=rss-opencli-daemon.service rss-x-display.service
 

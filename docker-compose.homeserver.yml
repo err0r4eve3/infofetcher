@@ -23,7 +23,7 @@ services:
     network_mode: host
     environment:
       APP_BIND: "127.0.0.1:${HOST_API_PORT:-18181}"
-      DATABASE_URL: "postgres://rss:reader@127.0.0.1:${HOST_PG_PORT:-15432}/rss_hub_reader"
+      DATABASE_URL: "postgres://infofetcher:reader@127.0.0.1:${HOST_PG_PORT:-15432}/infofetcher"
       APP_PUBLIC_URL: ${APP_PUBLIC_URL:-http://localhost:8080}
       AUTH_TOKEN: ${AUTH_TOKEN:?AUTH_TOKEN is required}
       COOKIE_SECURE: ${COOKIE_SECURE:-true}

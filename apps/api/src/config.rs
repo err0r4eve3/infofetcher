@@ -27,7 +27,6 @@ pub struct Config {
     pub llm_max_output_tokens: u32,
     pub llm_context_budget_chars: usize,
     pub event_agent_enabled: bool,
-    pub osint_searxng_url: Option<String>,
     pub event_agent_interval: Duration,
     pub event_agent_lookback_hours: i64,
     pub event_agent_max_pending: usize,
@@ -81,7 +80,7 @@ impl Config {
     pub fn from_env() -> anyhow::Result<Arc<Self>> {
         let database_url = env_string(
             "DATABASE_URL",
-            "postgres://rss:reader@localhost:5432/rss_hub_reader",
+            "postgres://infofetcher:reader@localhost:5432/infofetcher",
         );
         let app_bind = env_string("APP_BIND", "0.0.0.0:8080").parse()?;
         let app_public_url = env_string("APP_PUBLIC_URL", "http://localhost:8080");
@@ -106,16 +105,6 @@ impl Config {
         let llm_context_budget_chars =
             env_usize("LLM_CONTEXT_BUDGET_CHARS", 64_000).clamp(16_000, 2_000_000);
         let event_agent_enabled = env_bool("EVENT_AGENT_ENABLED", false);
-        let osint_searxng_url = env_optional_string("OSINT_SEARXNG_URL");
-        if let Some(raw) = &osint_searxng_url {
-            let url = reqwest::Url::parse(raw)?;
-            anyhow::ensure!(
-                matches!(url.scheme(), "http" | "https") && url.host_str().is_some()
-                    && url.username().is_empty() && url.password().is_none()
-                    && url.query().is_none() && url.fragment().is_none(),
-                "OSINT_SEARXNG_URL 必须是不含凭据、查询参数和片段的 HTTP(S) 地址"
-            );
-        }
         let event_agent_interval =
             Duration::from_secs(env_u64("EVENT_AGENT_INTERVAL_SECONDS", 30).clamp(10, 3_600));
         let event_agent_lookback_hours =
@@ -191,7 +180,6 @@ impl Config {
             llm_max_output_tokens,
             llm_context_budget_chars,
             event_agent_enabled,
-            osint_searxng_url,
             event_agent_interval,
             event_agent_lookback_hours,
             event_agent_max_pending,

@@ -99,7 +99,7 @@ pub fn router(state: AppState) -> Router {
 async fn health() -> Json<HealthResponse> {
     Json(HealthResponse {
         ok: true,
-        service: "rss-hub-reader-api",
+        service: "infofetcher-api",
     })
 }
 

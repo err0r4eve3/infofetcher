@@ -85,7 +85,7 @@ mod tests {
             rule_name: "AI 观察",
             matched_keywords: &["LLM".to_string(), "OpenAI".to_string()],
             article_title: "OpenAI 发布新模型",
-            feed_title: "RSS Hub Reader",
+            feed_title: "Infofetcher",
             summary: Some("这是摘要"),
             article_url: "https://example.com/article",
         });

@@ -38,7 +38,7 @@ async fn main() -> anyhow::Result<()> {
     tracing_subscriber::registry()
         .with(
             tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "rss_hub_reader_api=info,tower_http=info".into()),
+                .unwrap_or_else(|_| "infofetcher_api=info,tower_http=info".into()),
         )
         .with(tracing_subscriber::fmt::layer())
         .init();
@@ -147,7 +147,7 @@ async fn serve(state: AppState) -> anyhow::Result<()> {
     let bind = state.config.app_bind;
     let app = routes::router(state);
     let listener = TcpListener::bind(bind).await?;
-    tracing::info!(%bind, "rss hub reader api listening");
+    tracing::info!(%bind, "infofetcher api listening");
     axum::serve(listener, app).await?;
     Ok(())
 }

@@ -2,7 +2,7 @@
 
 The public URL is `https://infofetcher.error.moe`. Wrangler deploys a small Worker
 with a custom domain; Cloudflare manages its DNS and edge certificate. The Worker
-forwards requests to the existing `https://rss-reader.error.moe` origin, preserving
+forwards requests to the existing `https://error.moe` origin, preserving
 paths, request bodies and session cookies. PostgreSQL, ingestion and LLM jobs
 continue running on the existing server.
 

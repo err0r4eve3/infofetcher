@@ -58,7 +58,8 @@ type TimedCacheEntry<T> = {
   expiresAt: number
 }
 
-const SAVED_EVENTS_STORAGE_PREFIX = 'rss-hub-reader:saved-events:v1:'
+const SAVED_EVENTS_STORAGE_PREFIX = 'infofetcher:saved-events:v1:'
+const LEGACY_SAVED_EVENTS_STORAGE_PREFIX = 'rss-hub-reader:saved-events:v1:'
 const RADAR_CACHE_TTL_MS = 60_000
 const briefCache = new Map<string, TimedCacheEntry<NowBrief>>()
 const wireCache = new Map<string, TimedCacheEntry<WireResponse>>()
@@ -118,6 +119,7 @@ function loadSavedEvents(userName: string): EventBriefItem[] {
   if (typeof window === 'undefined') return []
   try {
     const stored = window.localStorage.getItem(savedEventsStorageKey(userName))
+      ?? window.localStorage.getItem(`${LEGACY_SAVED_EVENTS_STORAGE_PREFIX}${userName}`)
     if (!stored) return []
     const parsed = JSON.parse(stored) as unknown
     if (!Array.isArray(parsed)) return []

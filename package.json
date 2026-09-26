@@ -1,5 +1,5 @@
 {
-  "name": "rss-hub-reader",
+  "name": "infofetcher",
   "version": "0.1.0",
   "private": true,
   "workspaces": [

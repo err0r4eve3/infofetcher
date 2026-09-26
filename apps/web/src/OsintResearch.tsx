@@ -1,34 +1,29 @@
 import { useEffect, useRef, useState } from 'react'
 import { api, formatDate } from './api'
 
-type Provider = 'local' | 'gdelt' | 'searxng'
-type Capabilities = {
-  analysis_available: boolean
-  providers: { id: Provider; name: string; configured: boolean }[]
-}
 type ResearchReport = {
   event_id: string
   generated_at: string
   query: string
-  status: 'grounded' | 'evidence_only' | 'insufficient'
-  core_support_groups: number
+  status: 'analyzed' | 'insufficient'
+  total_sources: number
+  dependency_groups: number
   steps: { tool: string; status: string; message: string }[]
-  leads: { title: string; url: string }[]
+  leads: { article_id: string; title: string; url: string }[]
   materials: {
-    id: string; title: string; url: string; origin: 'local' | 'web'; selected: boolean
-    dependency_group: number; reported_published_at: string | null; retrieved_at: string
+    id: string; title: string; url: string; dependency_group: number
+    reported_published_at: string | null; retrieved_at: string; content_truncated: boolean
   }[]
-  analysis: {
-    summary: string; bullets: string[]; disagreements: string[]
-    citations: { article_id: string; claim_id: string; excerpt: string; url: string; source_title: string }[]
-  } | null
+  fragments: { kind: string; excerpt: string; numbers: string[]; article_ids: string[]; dependency_groups: number }[]
+  findings: { kind: string; message: string; article_ids: string[] }[]
   warnings: string[]
 }
 
 const TOOL_NAMES: Record<string, string> = {
-  local_evidence: '本地材料', search: '检索补证', read_page: '读取原文', source_audit: '来源审计', claim_verifier: '主张核验',
+  local_evidence: '本地材料', local_search: '站内检索', source_audit: '来源审计',
+  text_comparison: '转载线索', timeline_audit: '时间核对', evidence_fragments: '证据片段',
 }
-const STATUS_NAMES: Record<string, string> = { done: '完成', unavailable: '不可用', skipped: '跳过', insufficient: '证据不足' }
+const FRAGMENT_NAMES: Record<string, string> = { correction: '更正措辞', numeric: '数字线索', statement: '原文陈述' }
 
 function safeLink(value: string): string | undefined {
   try {
@@ -38,34 +33,23 @@ function safeLink(value: string): string | undefined {
 }
 
 export function OsintResearch({ eventId, title }: { eventId: string; title: string }) {
-  const [capabilities, setCapabilities] = useState<Capabilities | null>(null)
-  const [provider, setProvider] = useState<Provider>('local')
-  const [query, setQuery] = useState(title.slice(0, 240))
-  const [analyze, setAnalyze] = useState(false)
+  const [query, setQuery] = useState(Array.from(title).slice(0, 240).join(''))
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [report, setReport] = useState<ResearchReport | null>(null)
-  const [retry, setRetry] = useState(0)
   const request = useRef<AbortController | null>(null)
-
-  useEffect(() => {
-    const controller = new AbortController()
-    setError('')
-    void api<Capabilities>('/api/v2/osint/tools', { signal: controller.signal }).then(setCapabilities)
-      .catch((e: unknown) => { if (!controller.signal.aborted) setError(String(e)) })
-    return () => { controller.abort(); request.current?.abort() }
-  }, [retry])
+  useEffect(() => () => request.current?.abort(), [])
 
   async function investigate() {
     const controller = new AbortController()
+    request.current?.abort()
     request.current = controller
     setBusy(true)
     setError('')
     setReport(null)
     try {
       const result = await api<ResearchReport>(`/api/v2/events/${eventId}/osint/research`, {
-        method: 'POST', signal: controller.signal,
-        body: JSON.stringify({ provider, query: provider === 'local' ? undefined : query.trim(), analyze }),
+        method: 'POST', signal: controller.signal, body: JSON.stringify({ query: query.trim() }),
       })
       if (!controller.signal.aborted) setReport(result)
     } catch (e) { if (!controller.signal.aborted) setError(String(e)) }
@@ -82,41 +66,54 @@ export function OsintResearch({ eventId, title }: { eventId: string; title: stri
     setTimeout(() => URL.revokeObjectURL(url), 1000)
   }
 
+  function sources(ids: string[]) {
+    return ids.map((id) => {
+      const source = report?.materials.find((m) => m.id === id)
+      return source && <li key={id}><a href={safeLink(source.url)} target="_blank" rel="noreferrer">{source.title}</a> · 组 {source.dependency_group}</li>
+    })
+  }
+
+  const timeline = report ? [...report.materials].sort((a, b) => {
+    if (!a.reported_published_at) return b.reported_published_at ? 1 : 0
+    if (!b.reported_published_at) return -1
+    return a.reported_published_at.localeCompare(b.reported_published_at)
+  }) : []
+
   return <section className="osint-research" aria-label="调查 Agent">
     <h4>调查 Agent</h4>
-    {error && <p role="alert">{error} {!capabilities && <button type="button" onClick={() => setRetry((n) => n + 1)}>重试</button>}</p>}
-    {!capabilities && !error && <p role="status">正在加载工具…</p>}
-    {capabilities && <form onSubmit={(event) => { event.preventDefault(); void investigate() }}>
+    <p>使用本地材料和站内索引进行规则分析，无需外部接口。</p>
+    {error && <p role="alert">{error}</p>}
+    <form onSubmit={(event) => { event.preventDefault(); void investigate() }}>
       <div className="osint-research-fields">
-        <label>检索工具<select value={provider} disabled={busy} onChange={(e) => setProvider(e.target.value as Provider)}>
-          {capabilities.providers.map((p) => <option key={p.id} value={p.id} disabled={!p.configured}>{p.name}{!p.configured ? '（未配置）' : ''}</option>)}
-        </select></label>
-        {provider !== 'local' && <label>检索词<input value={query} required minLength={2} maxLength={240} disabled={busy} onChange={(e) => setQuery(e.target.value)} /></label>}
+        <label>站内检索词<input value={query} required maxLength={240} disabled={busy} onChange={(e) => setQuery(e.target.value)} /></label>
       </div>
-      {provider !== 'local' && <p className="osint-note">将检索词发送给 {provider === 'gdelt' ? 'GDELT，检索近一个月的报道' : '配置的 SearXNG，补充更正与澄清检索'}，并读取最多 4 个公开原文页面。工具配置不代表当前可用。</p>}
-      <label className="osint-archive-option"><input type="checkbox" checked={analyze} disabled={busy || !capabilities.analysis_available} onChange={(e) => setAnalyze(e.target.checked)} />主张核验{capabilities.analysis_available ? '（使用已配置模型）' : '（未配置模型）'}</label>
-      <div className="osint-links"><button type="submit" disabled={busy || (provider !== 'local' && query.trim().length < 2)}>{busy ? '正在调查…' : '开始调查'}</button></div>
-      {busy && <p role="status">正在整理来源和证据，最长约 3 分钟。</p>}
-    </form>}
+      <div className="osint-links"><button type="submit" disabled={busy || !query.trim()}>{busy ? '正在调查…' : '开始调查'}</button></div>
+      {busy && <p role="status">正在核对来源、时间和正文片段…</p>}
+    </form>
     {report && <div className="osint-research-result" aria-live="polite">
-      <div className="osint-links"><strong>{report.status === 'grounded' ? '引文已核验' : report.status === 'insufficient' ? '证据不足' : '证据清单'}</strong><button type="button" onClick={downloadReport}>导出调查</button></div>
-      <small>{formatDate(report.generated_at)} · {report.materials.filter((m) => m.selected).length} 篇分析材料</small>
-      <p>{report.query}</p>
-      {report.analysis && <>
-        <p>{report.analysis.summary}</p>
-        <small>核心主张：{report.core_support_groups} 个依赖组提供引文支持</small>
-        <ul>{report.analysis.bullets.map((text, i) => <li key={i}>{text}</li>)}</ul>
-        {report.analysis.disagreements.length > 0 && <><h4>分歧</h4><ul>{report.analysis.disagreements.map((text, i) => <li key={i}>{text}</li>)}</ul></>}
-        <details><summary>核验引文</summary>{report.analysis.citations.map((c, i) => <blockquote key={`${c.article_id}-${i}`}><p>{c.excerpt}</p><a href={safeLink(c.url)} target="_blank" rel="noreferrer">{c.source_title}</a> · {c.claim_id === 'summary' ? '核心主张' : c.claim_id.startsWith('disagreement:') ? '分歧材料' : '补充主张'}</blockquote>)}</details>
-      </>}
-      <ul className="osint-research-warnings">{report.warnings.map((warning) => <li key={warning}>{warning}</li>)}</ul>
-      <details><summary>调查过程</summary><ol>{report.steps.map((step, i) => <li key={i}><strong>{TOOL_NAMES[step.tool] ?? step.tool} · {STATUS_NAMES[step.status] ?? step.status}</strong><p>{step.message}</p></li>)}</ol></details>
-      <details><summary>来源与时间</summary><ul>{report.materials.map((m) => <li key={m.id}>
+      <div className="osint-links"><strong>{report.status === 'insufficient' ? '证据不足' : '本地分析完成'}</strong><button type="button" onClick={downloadReport}>导出调查</button></div>
+      <small>{formatDate(report.generated_at)} · {report.materials.length} / {report.total_sources} 篇材料 · {report.dependency_groups} 个依赖组</small>
+      <h4>待核对线索</h4>
+      {report.findings.length === 0 ? <p>当前规则未发现线索，不代表材料已经证实。</p> : <ul>{report.findings.map((finding, i) => <li key={i}>
+        <p>{finding.message}</p><ul>{sources(finding.article_ids)}</ul>
+      </li>)}</ul>}
+      <details><summary>证据片段 · {report.fragments.length}</summary>
+        <p>以下片段由规则抽取，未做语义核验。</p>
+        {report.fragments.map((fragment, i) => <blockquote key={i}>
+          <small>{FRAGMENT_NAMES[fragment.kind] ?? fragment.kind} · {fragment.dependency_groups} 个依赖组出现相同文字</small>
+          <p>{fragment.excerpt}</p>
+          {fragment.numbers.length > 0 && <small>数字：{fragment.numbers.join('、')}</small>}
+          <ul>{sources(fragment.article_ids)}</ul>
+        </blockquote>)}
+      </details>
+      <details><summary>来源与时间</summary><ul>{timeline.map((m) => <li key={m.id}>
         <a href={safeLink(m.url)} target="_blank" rel="noreferrer">{m.title}</a>
-        <small>组 {m.dependency_group} · {m.origin === 'local' ? '本地材料' : '外部原文'} · {m.selected ? '已选取' : '未选取'}<br />
-          源报发布时间：{m.reported_published_at ? formatDate(m.reported_published_at) : '未知'} · 读取时间：{formatDate(m.retrieved_at)}</small>
+        <small>组 {m.dependency_group} · 源报发布时间：{m.reported_published_at ? formatDate(m.reported_published_at) : '未知'}<br />
+          抓取时间：{formatDate(m.retrieved_at)}{m.content_truncated && ' · 正文分析范围已截断'}</small>
       </li>)}</ul></details>
-      {report.leads.length > 0 && <details><summary>检索线索</summary><ul>{report.leads.map((lead) => <li key={lead.url}><a href={safeLink(lead.url)} target="_blank" rel="noreferrer">{lead.title}</a></li>)}</ul></details>}
+      <details><summary>站内相关材料 · {report.leads.length}</summary><p>检索词：{report.query}。结果仅作线索，不自动并入当前事件。</p><ul>{report.leads.map((lead) => <li key={lead.article_id}><a href={safeLink(lead.url)} target="_blank" rel="noreferrer">{lead.title}</a></li>)}</ul></details>
+      <details><summary>调查过程</summary><ol>{report.steps.map((step, i) => <li key={i}><strong>{TOOL_NAMES[step.tool] ?? step.tool} · {step.status === 'done' ? '完成' : '不可用'}</strong><p>{step.message}</p></li>)}</ol></details>
+      <ul className="osint-research-warnings">{report.warnings.map((warning) => <li key={warning}>{warning}</li>)}</ul>
     </div>}
   </section>
 }

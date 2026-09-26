@@ -1,16 +1,18 @@
+name: infofetcher
+
 services:
   postgres:
     image: postgres:16-alpine
     environment:
-      POSTGRES_DB: rss_hub_reader
-      POSTGRES_USER: rss
+      POSTGRES_DB: infofetcher
+      POSTGRES_USER: infofetcher
       POSTGRES_PASSWORD: reader
     ports:
       - "127.0.0.1:5432:5432"
     volumes:
       - postgres-data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U rss -d rss_hub_reader"]
+      test: ["CMD-SHELL", "pg_isready -U infofetcher -d infofetcher"]
       interval: 5s
       timeout: 3s
       retries: 20
@@ -20,7 +22,7 @@ services:
       context: .
       dockerfile: apps/api/Dockerfile
     environment:
-      DATABASE_URL: postgres://rss:reader@postgres:5432/rss_hub_reader
+      DATABASE_URL: postgres://infofetcher:reader@postgres:5432/infofetcher
       APP_BIND: 0.0.0.0:8080
       APP_PUBLIC_URL: http://localhost:8080
       ADMIN_USERNAME: admin
@@ -41,7 +43,6 @@ services:
       LLM_MAX_OUTPUT_TOKENS: ${LLM_MAX_OUTPUT_TOKENS:-4096}
       LLM_CONTEXT_BUDGET_CHARS: ${LLM_CONTEXT_BUDGET_CHARS:-64000}
       EVENT_AGENT_ENABLED: ${EVENT_AGENT_ENABLED:-false}
-      OSINT_SEARXNG_URL: ${OSINT_SEARXNG_URL:-}
       EVENT_AGENT_INTERVAL_SECONDS: ${EVENT_AGENT_INTERVAL_SECONDS:-30}
       EVENT_AGENT_LOOKBACK_HOURS: ${EVENT_AGENT_LOOKBACK_HOURS:-24}
       EVENT_AGENT_MAX_PENDING: ${EVENT_AGENT_MAX_PENDING:-12}

@@ -138,7 +138,7 @@ async fn fetch_and_extract(
     let mut headers = reqwest::header::HeaderMap::new();
     headers.insert(
         reqwest::header::USER_AGENT,
-        reqwest::header::HeaderValue::from_static("rss-hub-reader/0.1"),
+        reqwest::header::HeaderValue::from_static("infofetcher/0.1"),
     );
     if let Some(cookie_header) = cookie_header
         && let Ok(value) = reqwest::header::HeaderValue::from_str(cookie_header)
@@ -765,7 +765,6 @@ mod tests {
             llm_max_output_tokens: 0,
             llm_context_budget_chars: 64_000,
             event_agent_enabled: false,
-            osint_searxng_url: None,
             event_agent_interval: std::time::Duration::from_secs(30),
             event_agent_lookback_hours: 24,
             event_agent_max_pending: 12,

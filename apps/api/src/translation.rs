@@ -259,7 +259,7 @@ async fn translate_text(
     );
     let response = http
         .post(url)
-        .header(reqwest::header::USER_AGENT, "rss-hub-reader/1.0")
+        .header(reqwest::header::USER_AGENT, "infofetcher/1.0")
         .bearer_auth(&config.translation_api_key)
         .json(&request)
         .timeout(config.translation_timeout)

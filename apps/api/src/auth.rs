@@ -160,7 +160,6 @@ mod tests {
             llm_max_output_tokens: 0,
             llm_context_budget_chars: 64_000,
             event_agent_enabled: false,
-            osint_searxng_url: None,
             event_agent_interval: std::time::Duration::from_secs(30),
             event_agent_lookback_hours: 24,
             event_agent_max_pending: 12,

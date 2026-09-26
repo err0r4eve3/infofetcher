@@ -32,20 +32,20 @@ RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
 COPY Cargo.toml Cargo.lock* ./
 COPY apps/api/Cargo.toml apps/api/Cargo.toml
 COPY apps/api apps/api
-RUN --mount=type=cache,id=rss-hub-reader-cargo-registry-v1,target=/usr/local/cargo/registry,sharing=locked \
-    --mount=type=cache,id=rss-hub-reader-api-target-v1,target=/app/target,sharing=locked \
+RUN --mount=type=cache,id=infofetcher-cargo-registry-v1,target=/usr/local/cargo/registry,sharing=locked \
+    --mount=type=cache,id=infofetcher-api-target-v1,target=/app/target,sharing=locked \
     touch apps/api/src/main.rs \
-    && cargo build --release -p rss-hub-reader-api \
+    && cargo build --release -p infofetcher-api \
     && mkdir -p /out \
-    && cp /app/target/release/rss-hub-reader-api /out/rss-hub-reader-api
+    && cp /app/target/release/infofetcher-api /out/infofetcher-api
 
 FROM python:3.12-slim
 WORKDIR /app
-COPY --from=api /out/rss-hub-reader-api /usr/local/bin/rss-hub-reader-api
+COPY --from=api /out/infofetcher-api /usr/local/bin/infofetcher-api
 COPY --from=web /app/apps/web/dist /app/apps/web/dist
 COPY --from=opencli /usr/local/bin/node /usr/local/bin/node
 COPY --from=opencli /usr/local/lib/node_modules /usr/local/lib/node_modules
 RUN ln -s /usr/local/lib/node_modules/@jackwener/opencli/dist/src/main.js /usr/local/bin/opencli
 ENV WEB_DIST_DIR=/app/apps/web/dist
 EXPOSE 8080
-CMD ["rss-hub-reader-api", "serve"]
+CMD ["infofetcher-api", "serve"]

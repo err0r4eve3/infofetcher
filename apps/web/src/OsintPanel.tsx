@@ -59,7 +59,6 @@ export function OsintPanel({ eventId }: { eventId: string }) {
   const [error, setError] = useState('')
   const [reload, setReload] = useState(0)
   const [busy, setBusy] = useState<string | null>(null)
-  const [includeArchive, setIncludeArchive] = useState(false)
   const request = useRef<AbortController | null>(null)
   useEffect(() => {
     if (!expanded) return
@@ -77,7 +76,7 @@ export function OsintPanel({ eventId }: { eventId: string }) {
     setError('')
     try {
       const result = await api<Capture>(`/api/v2/events/${eventId}/evidence/${articleId}/capture`, {
-        method: 'POST', body: JSON.stringify({ include_archive: includeArchive }), signal: controller.signal
+        method: 'POST', body: JSON.stringify({}), signal: controller.signal
       })
       setDossier((current) => current && ({ ...current, sources: current.sources.map((source) =>
         source.article_id === articleId ? { ...source, latest_capture: result } : source) }))
@@ -111,15 +110,9 @@ export function OsintPanel({ eventId }: { eventId: string }) {
           <h4>待核查</h4>
           <ul>{dossier.gaps.map((gap) => <li key={gap}>{gap}</li>)}</ul>
           <p>哪些原始记录可以支持或推翻该主张？是否把同一声明的转载当作独立报道？</p>
-          <nav className="osint-links" aria-label="调查工具">
-            <a href={`https://www.google.com/search?q=${encodeURIComponent(dossier.title)}`} target="_blank" rel="noreferrer">交叉检索</a>
-            <a href={`https://www.google.com/search?q=${encodeURIComponent(`${dossier.title} correction clarification 更正 澄清`)}`} target="_blank" rel="noreferrer">更正与反证</a>
-            <a href="https://bellingcat.gitbook.io/toolkit" target="_blank" rel="noreferrer">Bellingcat 工具库</a>
-          </nav>
           <OsintResearch key={eventId} eventId={eventId} title={dossier.title} />
           <h4>来源溯源</h4>
           <p>同发布者、同规范链接或相同正文指纹合并为一组；来源质量分仅用于筛选。</p>
-          <label className="osint-archive-option"><input type="checkbox" checked={includeArchive} onChange={(e) => setIncludeArchive(e.target.checked)} />取证时查询 Wayback（将原文 URL 发给 Internet Archive）</label>
           {dossier.sources.map((source) => <details className="osint-source" key={source.article_id}>
             <summary><span>组 {source.dependency_group} · {source.source_title}</span>{source.title}</summary>
             <dl>
