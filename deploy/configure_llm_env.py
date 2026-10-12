@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Atomically configure an infofetcher environment for the Luna gateway."""
+"""Atomically configure an infofetcher environment for the CPA LLM gateway."""
 
 from __future__ import annotations
 
@@ -15,10 +15,10 @@ from pathlib import Path
 
 
 UPDATES = {
-    "LLM_BASE_URL": "https://luna-api.error.moe/v1",
-    "LLM_MODEL": "gpt-5.6-luna",
-    "TRANSLATION_BASE_URL": "https://luna-api.error.moe/v1",
-    "TRANSLATION_MODEL": "gpt-5.6-luna",
+    "LLM_BASE_URL": "https://cpa.ladymiao.net/v1",
+    "LLM_MODEL": "claude-haiku-5-5",
+    "TRANSLATION_BASE_URL": "https://cpa.ladymiao.net/v1",
+    "TRANSLATION_MODEL": "claude-haiku-5-5",
 }
 
 
@@ -53,7 +53,7 @@ def main() -> None:
             output.append(f"{name}={value}")
 
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    backup = path.with_name(f"{path.name}.before-luna-{timestamp}")
+    backup = path.with_name(f"{path.name}.before-llm-{timestamp}")
     shutil.copy2(path, backup)
     os.chown(backup, stat.st_uid, stat.st_gid)
 

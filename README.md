@@ -82,9 +82,9 @@ docker compose up --build
 翻译服务与摘要服务使用两组独立配置，默认兼容 OpenAI API：
 
 ```bash
-TRANSLATION_BASE_URL=https://api.openai.com/v1
+TRANSLATION_BASE_URL=https://cpa.ladymiao.net/v1
 TRANSLATION_API_KEY=
-TRANSLATION_MODEL=gpt-5.6-luna
+TRANSLATION_MODEL=claude-haiku-5-5
 TRANSLATION_TIMEOUT_SECONDS=60
 TRANSLATION_MAX_CONCURRENCY=2
 TRANSLATION_MAX_INPUT_CHARS=60000

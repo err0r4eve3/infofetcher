@@ -424,8 +424,8 @@ mod tests {
     #[test]
     fn generic_openai_request_uses_max_completion_tokens() {
         let request = chat_request(
-            "https://luna-api.error.moe/v1",
-            "gpt-5.6-luna",
+            "https://cpa.ladymiao.net/v1",
+            "claude-haiku-5-5",
             Vec::new(),
             512,
         );
