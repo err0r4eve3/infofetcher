@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { ArrowRight, Bell, ChartNoAxesCombined, Cpu, FileText, Globe2, Layers3, LayoutGrid, Search, ShieldCheck, SlidersHorizontal, X } from 'lucide-react'
 import type { EventBriefItem, NowBrief } from './api'
-import { formatDate } from './api'
+import { formatDate, watchDisplayName } from './api'
 import { isCorrection, readHiddenPanels, SITUATION_PANELS, situationPanelItems, type SituationPanel, type SituationTopic } from './situation'
 import './situation.css'
 import { ReportFilterControls } from './ReportFilterControls'
@@ -129,7 +129,7 @@ function SignalPanel({ panel, label, items, onHide, onOpenEvent }: {
               : <time dateTime={item.published_at} title={formatDate(item.published_at)}>{new Date(item.published_at).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}</time>}
           <span className="situation-event-body">
             <strong>{item.title}</strong>
-            <span className="situation-excerpt">{panel === 'watches' ? `命中关注：${item.watch_names.join('、') || '已匹配关注规则'}` : panel === 'priority' ? item.what_happened : item.why_now}</span>
+            <span className="situation-excerpt">{panel === 'watches' ? `命中关注：${item.watch_names.map(watchDisplayName).join('、') || '已匹配关注规则'}` : panel === 'priority' ? item.what_happened : item.why_now}</span>
             <span className="situation-event-meta">
               <span className={`situation-revision${isCorrection(item) ? ' correction' : ''}`}>{REVISIONS[item.revision_type]}</span>
               {panel === 'priority' ? <span>{item.independent_source_count} 个去重订阅源 · {item.source_titles.slice(0, 3).join(' / ') || '来源待补全'}</span> : <span>{item.source_titles[0] || '来源待补全'}</span>}

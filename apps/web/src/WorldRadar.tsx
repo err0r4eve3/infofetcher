@@ -48,6 +48,7 @@ import {
   takePrefetched,
   WireResponse,
   Watch,
+  watchDisplayName,
   WatchRequest
 } from './api'
 
@@ -575,7 +576,7 @@ export function WorldRadar({
   }
 
   async function deleteWatch(watch: Watch) {
-    if (!window.confirm(`删除关注「${watch.name}」？`)) return
+    if (!window.confirm(`删除关注「${watchDisplayName(watch.name)}」？`)) return
     setSaving(true)
     setError(null)
     try {
@@ -1053,7 +1054,7 @@ export function WorldRadar({
                 <div className="watch-icon"><Target size={20} /></div>
                 <div>
                   <div className="watch-title-line">
-                    <h2>{watch.name}</h2>
+                    <h2>{watchDisplayName(watch.name)}</h2>
                     <span>{watch.notification_mode === 'urgent' ? '紧急通知' : watch.notification_mode === 'brief' ? '进入简报' : '仅追踪'}</span>
                   </div>
                   <p>{watch.query}</p>
@@ -1064,7 +1065,7 @@ export function WorldRadar({
                     {watch.enabled ? <XCircle size={17} /> : <CheckCircle2 size={17} />}
                     {watch.enabled ? '暂停' : '启用'}
                   </button>
-                  <button type="button" className="danger" onClick={() => void deleteWatch(watch)} disabled={saving} aria-label={`删除 ${watch.name}`}>
+                  <button type="button" className="danger" onClick={() => void deleteWatch(watch)} disabled={saving} aria-label={`删除 ${watchDisplayName(watch.name)}`}>
                     <Trash2 size={17} />
                   </button>
                 </div>
@@ -1116,7 +1117,7 @@ const EventCard = memo(function EventCard({
         <SourceCoverage item={item} />
         <div className="event-card-footer">
           <span className="event-change"><TrendingUp size={14} aria-hidden="true" />{item.why_now}</span>
-          {item.watch_names.map((watch) => <span className="watch-hit" key={watch}>命中 {watch}</span>)}
+          {item.watch_names.map((watch) => <span className="watch-hit" key={watch}>命中 {watchDisplayName(watch)}</span>)}
         </div>
       </div>
       <ArrowRight className="event-open" size={18} aria-hidden="true" />

@@ -15,6 +15,7 @@
 .situation-scope span { grid-column: 2; color: var(--text-soft); }
 .situation-content { min-width: 0; }
 .situation-overview { background: var(--layer-work); border: 1px solid var(--line); }
+.situation-overview > .report-filter-bar { margin: 0; padding: 0 18px 14px; }
 .situation-toolbar { display: flex; align-items: center; gap: 12px; padding: 14px 18px; }
 .situation-toolbar h2 { flex: 1; margin: 0; font-size: 24px; font-weight: 600; letter-spacing: -.03em; }
 .situation-search { display: flex; align-items: center; gap: 10px; width: min(320px, 45%); min-width: 0; min-height: 44px; padding: 0 12px; border: 1px solid var(--line); border-radius: 6px; color: var(--text-muted); background: var(--layer-recessed); }

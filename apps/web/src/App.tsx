@@ -2431,6 +2431,10 @@ function SettingsPage({
         </div>
         <div className="settings-header-actions">
           <ThemeToggle theme={theme} onToggleTheme={onToggleTheme} />
+          <button type="button" className="secondary-button" onClick={onLogout}>
+            <LogOut size={16} />
+            退出登录
+          </button>
           <button type="button" className="secondary-button" onClick={onBack}>
             <ArrowLeft size={16} />
             返回报告
@@ -2449,19 +2453,7 @@ function SettingsPage({
       )}
 
       <div className="settings-layout">
-        <section className="settings-section">
-          <div className="settings-section-header">
-            <div>
-              <h2>登录</h2>
-            </div>
-            <button type="button" className="secondary-button" onClick={onLogout}>
-              <LogOut size={16} />
-              退出登录
-            </button>
-          </div>
-        </section>
-
-        <section className="settings-section">
+        <section className="settings-section settings-section-wide">
           <div className="settings-section-header">
             <div>
               <h2>添加订阅</h2>

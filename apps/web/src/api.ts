@@ -389,6 +389,12 @@ export type WatchRequest = {
   enabled: boolean
 }
 
+// Tracked-event watches end with " · <event id prefix>" to satisfy the unique
+// name constraint; the suffix is not meaningful to readers.
+export function watchDisplayName(name: string): string {
+  return name.replace(/ · [0-9a-f]{6}$/, '')
+}
+
 export class ApiError extends Error {
   status: number
 
