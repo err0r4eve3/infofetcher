@@ -65,7 +65,8 @@
 
 .source-coverage {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
+  min-width: 0;
   align-items: center;
   gap: 8px;
   margin-top: 16px;
@@ -91,9 +92,13 @@
   font-weight: 600;
 }
 .source-monograms > span + span { margin-left: -5px; }
-.source-names { overflow-wrap: anywhere; }
-.source-coverage-count { white-space: nowrap; color: var(--text-strong); padding-left: 8px; border-left: 1px solid var(--line-strong); }
-.single-source-label { padding-left: 8px; border-left: 1px solid var(--line-strong); }
+.source-names { flex: 0 1 auto; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.source-coverage-count,
+.single-source-label { flex: 0 0 auto; white-space: nowrap; }
+.source-coverage-count { color: var(--text); font-weight: 600; }
+.single-source-label { color: var(--text-soft); }
+.source-coverage-count::before,
+.single-source-label::before { content: "·"; margin-right: 8px; color: var(--text-soft); font-weight: 400; }
 
 .inspector-tabs {
   display: flex;
