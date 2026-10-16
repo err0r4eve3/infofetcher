@@ -26,7 +26,7 @@ use crate::{
     keywords,
     models::{
         ArticleDetail, ArticleListItem, ArticleTranslation, BatchSummaryRequest, CreateFeedRequest,
-        CreateFolderRequest, Feed, Folder, HealthResponse, JobResponse, KeywordActionResponse,
+        CreateFolderRequest, Feed, FeedQualityStats, Folder, HealthResponse, JobResponse, KeywordActionResponse,
         KeywordMatch, KeywordMatchActionRequest, KeywordRule, KeywordRuleRequest,
         KeywordScanRequest, KeywordScanResponse, Monitor, MonitorRequest,
         SelectionTranslationRequest, SelectionTranslationResponse, StoryCluster, Summary,
@@ -89,6 +89,9 @@ pub fn router(state: AppState) -> Router {
         .route("/api/opml/import", post(import_opml))
         .route("/api/websub/{id}", get(websub_verify).post(websub_notify))
         .merge(crate::world::router())
+        .merge(crate::intel::router())
+        .merge(crate::editorial::router())
+        .merge(crate::mcp::router())
         .route("/hub/{adapter}", get(hub_root))
         .route("/hub/{adapter}/{*path}", get(hub_path))
         .fallback_service(ServeDir::new(static_dir).append_index_html_on_directories(true))
@@ -250,7 +253,12 @@ async fn list_feeds(
     auth::require_session(&state.pool, &headers).await?;
     let rows = sqlx::query(
         "SELECT f.id, f.folder_id, f.title, f.site_url, f.feed_url, f.hub_adapter, f.hub_path,
-                f.source_type, f.language, f.region, f.quality_score,
+                f.source_type, f.language, f.region, f.quality_score, f.editorial_profile,
+                fqs.snr AS quality_snr, fqs.average_score AS quality_average_score,
+                fqs.passed_events AS quality_passed_events,
+                fqs.assessed_events AS quality_assessed_events,
+                COALESCE(fqs.auto_adjust, 0) AS quality_auto_adjust,
+                COALESCE(fqs.declining, false) AS quality_declining,
                 COALESCE(sf.weight, 0) AS feedback_weight, COALESCE(sf.muted, false) AS muted,
                 f.last_fetched_at, f.last_success_at, f.next_fetch_at,
                 f.consecutive_failures, f.last_error,
@@ -258,8 +266,9 @@ async fn list_feeds(
                 count(a.id) FILTER (WHERE a.is_read = false)::bigint AS unread_count
          FROM feeds f
          LEFT JOIN source_feedback sf ON sf.feed_id = f.id
+         LEFT JOIN feed_quality_stats fqs ON fqs.feed_id = f.id
          LEFT JOIN articles a ON a.feed_id = f.id
-         GROUP BY f.id, sf.weight, sf.muted
+         GROUP BY f.id, sf.weight, sf.muted, fqs.feed_id
          ORDER BY lower(f.title)",
     )
     .fetch_all(&state.pool)
@@ -468,6 +477,12 @@ async fn update_feed(
     Json(body): Json<UpdateFeedRequest>,
 ) -> AppResult<Json<Feed>> {
     auth::require_session(&state.pool, &headers).await?;
+    if let Some(profile) = body.editorial_profile.as_deref()
+        && profile != "auto"
+        && crate::editorial::profiles::get(profile).is_none()
+    {
+        return Err(AppError::BadRequest(format!("未知的编辑 Profile: {profile}")));
+    }
     let mut transaction = state.pool.begin().await?;
     lock_story_generation_for_metadata_write(&mut transaction).await?;
     let updated = sqlx::query(
@@ -477,6 +492,11 @@ async fn update_feed(
              language = COALESCE(NULLIF($4, ''), language),
              region = COALESCE(NULLIF($5, ''), region),
              quality_score = COALESCE($6, quality_score),
+             editorial_profile = CASE
+               WHEN $7::text IS NULL THEN editorial_profile
+               WHEN $7 = 'auto' THEN NULL
+               ELSE $7
+             END,
              updated_at = now()
          WHERE id = $1",
     )
@@ -486,6 +506,7 @@ async fn update_feed(
     .bind(body.language.as_deref())
     .bind(body.region.as_deref())
     .bind(body.quality_score.map(|value| value.clamp(0, 100)))
+    .bind(body.editorial_profile.as_deref())
     .execute(&mut *transaction)
     .await?;
     if updated.rows_affected() != 1 {
@@ -512,16 +533,22 @@ async fn update_feed(
     transaction.commit().await?;
     let row = sqlx::query(
         "SELECT f.id, f.folder_id, f.title, f.site_url, f.feed_url, f.hub_adapter, f.hub_path,
-                f.source_type, f.language, f.region, f.quality_score,
+                f.source_type, f.language, f.region, f.quality_score, f.editorial_profile,
+                fqs.snr AS quality_snr, fqs.average_score AS quality_average_score,
+                fqs.passed_events AS quality_passed_events,
+                fqs.assessed_events AS quality_assessed_events,
+                COALESCE(fqs.auto_adjust, 0) AS quality_auto_adjust,
+                COALESCE(fqs.declining, false) AS quality_declining,
                 COALESCE(sf.weight, 0) AS feedback_weight, COALESCE(sf.muted, false) AS muted,
                 f.last_fetched_at, f.last_success_at, f.next_fetch_at, f.consecutive_failures, f.last_error,
                 count(a.id)::bigint AS article_count,
                 count(a.id) FILTER (WHERE a.is_read = false)::bigint AS unread_count
          FROM feeds f
          LEFT JOIN source_feedback sf ON sf.feed_id = f.id
+         LEFT JOIN feed_quality_stats fqs ON fqs.feed_id = f.id
          LEFT JOIN articles a ON a.feed_id = f.id
          WHERE f.id = $1
-         GROUP BY f.id, sf.weight, sf.muted",
+         GROUP BY f.id, sf.weight, sf.muted, fqs.feed_id",
     )
     .bind(id)
     .fetch_optional(&state.pool)
@@ -908,6 +935,48 @@ async fn search_articles(
     Ok(Json(rows.into_iter().map(article_list_from_row).collect()))
 }
 
+/// 全文检索文章，按检索排名返回。MCP 共用。
+pub(crate) async fn search_article_items(
+    state: &AppState,
+    query: &str,
+    limit: i64,
+) -> AppResult<Vec<ArticleListItem>> {
+    let limit = limit.clamp(1, 50);
+    let mut ids = state.search.search(query, limit as usize)?;
+    if ids.len() < limit as usize {
+        for id in fallback_search_ids(state, query, limit).await? {
+            if !ids.contains(&id) {
+                ids.push(id);
+            }
+            if ids.len() >= limit as usize {
+                break;
+            }
+        }
+    }
+    if ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let rows = article_query(
+        state,
+        ArticleQuery {
+            feed_id: None,
+            folder_id: None,
+            story_id: None,
+            unread: None,
+            favorite: None,
+            min_quality: None,
+            sort: Some("search".to_string()),
+            since_hours: None,
+            limit: Some(limit),
+            offset: None,
+        },
+        Some(ids),
+    )
+    .await?;
+    Ok(rows.into_iter().map(article_list_from_row).collect())
+}
+
+// 正文已由 Tantivy（含中文二元分词）覆盖；兜底只查标题和信源名，避免对正文全表扫描。
 async fn fallback_search_ids(state: &AppState, query: &str, limit: i64) -> AppResult<Vec<Uuid>> {
     let pattern = format!("%{}%", query.trim());
     let rows = sqlx::query(
@@ -915,8 +984,6 @@ async fn fallback_search_ids(state: &AppState, query: &str, limit: i64) -> AppRe
          FROM articles a
          JOIN feeds f ON f.id = a.feed_id
          WHERE a.title ILIKE $1
-            OR a.extracted_content ILIKE $1
-            OR a.content ILIKE $1
             OR f.title ILIKE $1
          ORDER BY similarity(a.title, $2) DESC,
                   COALESCE(a.published_at, a.fetched_at) DESC
@@ -1580,6 +1647,17 @@ fn feed_from_row(row: sqlx::postgres::PgRow) -> Feed {
         last_error: row.get("last_error"),
         article_count: row.get("article_count"),
         unread_count: row.get("unread_count"),
+        editorial_profile: row.get("editorial_profile"),
+        quality_stats: row
+            .get::<Option<i32>, _>("quality_assessed_events")
+            .map(|assessed_events| FeedQualityStats {
+                snr: row.get("quality_snr"),
+                average_score: row.get("quality_average_score"),
+                passed_events: row.get("quality_passed_events"),
+                assessed_events,
+                auto_adjust: row.get("quality_auto_adjust"),
+                declining: row.get("quality_declining"),
+            }),
     }
 }
 

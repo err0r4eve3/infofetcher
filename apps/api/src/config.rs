@@ -19,6 +19,13 @@ pub struct Config {
     pub feed_max_bytes: usize,
     pub article_max_bytes: usize,
     pub allow_private_fetch: bool,
+    pub osint_searxng_url: Option<String>,
+    /// 只允许访问 `/api/v2/intel/*` 的只读服务凭据，供 TradingAgents 等外部服务使用。
+    pub intel_api_token: Option<String>,
+    /// OpenAI 兼容的向量服务（本机 llama.cpp）。未配置时不做向量召回。
+    pub embedding_base_url: Option<String>,
+    pub embedding_model: String,
+    pub embedding_timeout: Duration,
     pub llm_base_url: String,
     pub llm_api_key: String,
     pub llm_model: String,
@@ -58,6 +65,119 @@ pub struct Config {
     pub(crate) article_fetch_cookies: HashMap<String, String>,
     pub(crate) opencli_feeds: HashMap<String, OpenCliFeedConfig>,
     pub(crate) web_watches: HashMap<String, WebWatchConfig>,
+    pub editorial: EditorialConfig,
+}
+
+/// 编辑层配置：LLM 评审、栏目配额、日报分发和 MCP。见 docs/EDITORIAL_LAYER.md。
+#[derive(Debug, Clone)]
+pub struct EditorialConfig {
+    pub enabled: bool,
+    pub interval: Duration,
+    pub daily_event_limit: i64,
+    /// Profile id 到进入简报的最低分（0–10）。
+    pub thresholds: HashMap<String, f32>,
+    /// 栏目到简报条数上限比例。
+    pub section_shares: HashMap<String, f32>,
+    pub edition_hour: u32,
+    pub edition_utc_offset_hours: i32,
+    pub brief_feed_token: Option<String>,
+    pub brief_webhook_url: Option<String>,
+    pub brief_webhook_format: String,
+    pub brief_telegram: bool,
+    pub mcp_api_token: Option<String>,
+}
+
+impl Default for EditorialConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            interval: Duration::from_secs(600),
+            daily_event_limit: 600,
+            thresholds: parse_number_map(DEFAULT_EDITORIAL_THRESHOLDS),
+            section_shares: parse_number_map(DEFAULT_BRIEF_SECTION_SHARES),
+            edition_hour: 8,
+            edition_utc_offset_hours: 8,
+            brief_feed_token: None,
+            brief_webhook_url: None,
+            brief_webhook_format: "generic".to_string(),
+            brief_telegram: false,
+            mcp_api_token: None,
+        }
+    }
+}
+
+impl EditorialConfig {
+    pub fn threshold(&self, profile: &str) -> f32 {
+        self.thresholds.get(profile).copied().unwrap_or(5.0)
+    }
+
+    fn from_env(auth_token: &str, intel_api_token: Option<&str>) -> anyhow::Result<Self> {
+        let brief_feed_token = env_optional_string("BRIEF_FEED_TOKEN");
+        let mcp_api_token = env_optional_string("MCP_API_TOKEN");
+        for (name, token) in [
+            ("BRIEF_FEED_TOKEN", brief_feed_token.as_deref()),
+            ("MCP_API_TOKEN", mcp_api_token.as_deref()),
+        ] {
+            if let Some(token) = token {
+                validate_service_token(name, token, auth_token)?;
+                if Some(token) == intel_api_token {
+                    anyhow::bail!("{name} 不能与 INTEL_API_TOKEN 相同");
+                }
+            }
+        }
+        if brief_feed_token.is_some() && brief_feed_token == mcp_api_token {
+            anyhow::bail!("BRIEF_FEED_TOKEN 不能与 MCP_API_TOKEN 相同");
+        }
+        let brief_webhook_format = env_string("BRIEF_WEBHOOK_FORMAT", "generic");
+        if !matches!(brief_webhook_format.as_str(), "generic" | "feishu") {
+            anyhow::bail!("BRIEF_WEBHOOK_FORMAT 只支持 generic 或 feishu");
+        }
+        Ok(Self {
+            enabled: env_bool("EDITORIAL_ENABLED", false),
+            interval: Duration::from_secs(
+                env_u64("EDITORIAL_INTERVAL_SECONDS", 600).clamp(60, 6 * 3_600),
+            ),
+            daily_event_limit: env_i64("EDITORIAL_DAILY_EVENT_LIMIT", 600).clamp(0, 10_000),
+            thresholds: parse_number_map(&env_string(
+                "EDITORIAL_THRESHOLDS",
+                DEFAULT_EDITORIAL_THRESHOLDS,
+            ))
+            .into_iter()
+            .map(|(key, value)| (key, value.clamp(0.0, 10.0)))
+            .collect(),
+            section_shares: parse_number_map(&env_string(
+                "BRIEF_SECTION_SHARES",
+                DEFAULT_BRIEF_SECTION_SHARES,
+            ))
+            .into_iter()
+            .map(|(key, value)| (key, value.clamp(0.0, 1.0)))
+            .collect(),
+            edition_hour: env_u64("BRIEF_EDITION_HOUR", 8).min(23) as u32,
+            edition_utc_offset_hours: env_i64("BRIEF_EDITION_UTC_OFFSET_HOURS", 8).clamp(-12, 14)
+                as i32,
+            brief_feed_token,
+            brief_webhook_url: env_optional_string("BRIEF_WEBHOOK_URL"),
+            brief_webhook_format,
+            brief_telegram: env_bool("BRIEF_TELEGRAM", false),
+            mcp_api_token,
+        })
+    }
+}
+
+const DEFAULT_EDITORIAL_THRESHOLDS: &str = "world-news:5,tech-research:5,long-read:5";
+const DEFAULT_BRIEF_SECTION_SHARES: &str =
+    "world:0.45,technology:0.3,business:0.3,security:0.2,general:0.25";
+
+/// 解析 `key:number,key:number`；格式错误的项直接忽略。
+fn parse_number_map(raw: &str) -> HashMap<String, f32> {
+    raw.split(',')
+        .filter_map(|pair| {
+            let (key, value) = pair.split_once(':')?;
+            let key = key.trim();
+            let value = value.trim().parse::<f32>().ok()?;
+            (!key.is_empty() && value.is_finite()).then(|| (key.to_string(), value))
+        })
+        .collect()
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -66,6 +186,22 @@ pub struct OpenCliFeedConfig {
     pub link: Option<String>,
     pub description: Option<String>,
     pub args: Vec<String>,
+    #[serde(default)]
+    pub filter: Option<OpenCliFilterConfig>,
+}
+
+/// 社媒条目过滤：先按作者、关键词和语言白名单做本地规则过滤，
+/// 配置 `llm_rubric` 时再用 LLM 按标准批量判断保留与否。
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct OpenCliFilterConfig {
+    #[serde(default)]
+    pub exclude_authors: Vec<String>,
+    #[serde(default)]
+    pub exclude_keywords: Vec<String>,
+    #[serde(default)]
+    pub languages: Vec<String>,
+    #[serde(default)]
+    pub llm_rubric: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -147,6 +283,14 @@ impl Config {
         let web_watches = parse_web_watches()?;
 
         validate_auth_token(&auth_token)?;
+        let intel_api_token = env_optional_string("INTEL_API_TOKEN");
+        if let Some(token) = &intel_api_token {
+            validate_intel_api_token(token, &auth_token)?;
+        }
+        let editorial = EditorialConfig::from_env(&auth_token, intel_api_token.as_deref())?;
+        if editorial.enabled && llm_api_key.trim().is_empty() {
+            anyhow::bail!("EDITORIAL_ENABLED=true 时需要配置 LLM_API_KEY");
+        }
         if event_agent_enabled
             && llm_api_key.trim().is_empty()
             && translation_api_key.trim().is_empty()
@@ -172,6 +316,11 @@ impl Config {
             feed_max_bytes,
             article_max_bytes,
             allow_private_fetch,
+            osint_searxng_url: env_optional_string("OSINT_SEARXNG_URL"),
+            intel_api_token,
+            embedding_base_url: env_optional_string("EMBEDDING_BASE_URL"),
+            embedding_model: env_string("EMBEDDING_MODEL", "embeddinggemma-2"),
+            embedding_timeout: Duration::from_secs(env_u64("EMBEDDING_TIMEOUT_SECONDS", 30).max(1)),
             llm_base_url,
             llm_api_key,
             llm_model,
@@ -211,6 +360,7 @@ impl Config {
             article_fetch_cookies,
             opencli_feeds,
             web_watches,
+            editorial,
         }))
     }
 
@@ -244,6 +394,20 @@ impl Config {
 fn validate_auth_token(token: &str) -> anyhow::Result<()> {
     if !(32..=256).contains(&token.len()) || !token.bytes().all(|b| b.is_ascii_graphic()) {
         anyhow::bail!("AUTH_TOKEN 必须为 32–256 个无空白 ASCII 字符，请使用随机生成的 token");
+    }
+    Ok(())
+}
+
+fn validate_intel_api_token(token: &str, auth_token: &str) -> anyhow::Result<()> {
+    validate_service_token("INTEL_API_TOKEN", token, auth_token)
+}
+
+fn validate_service_token(name: &str, token: &str, auth_token: &str) -> anyhow::Result<()> {
+    if !(32..=256).contains(&token.len()) || !token.bytes().all(|b| b.is_ascii_graphic()) {
+        anyhow::bail!("{name} 必须为 32–256 个无空白 ASCII 字符，请使用随机生成的 token");
+    }
+    if token == auth_token {
+        anyhow::bail!("{name} 不能与 AUTH_TOKEN 相同");
     }
     Ok(())
 }
@@ -312,10 +476,30 @@ fn parse_opencli_feeds_json(raw: &str) -> anyhow::Result<HashMap<String, OpenCli
                     link: feed.link,
                     description: feed.description,
                     args,
+                    filter: feed.filter.map(normalize_opencli_filter),
                 },
             ))
         })
         .collect()
+}
+
+fn normalize_opencli_filter(filter: OpenCliFilterConfig) -> OpenCliFilterConfig {
+    let normalize = |values: Vec<String>, strip: &[char]| {
+        values
+            .into_iter()
+            .map(|value| value.trim().trim_start_matches(strip).to_lowercase())
+            .filter(|value| !value.is_empty())
+            .collect::<Vec<_>>()
+    };
+    OpenCliFilterConfig {
+        exclude_authors: normalize(filter.exclude_authors, &['@']),
+        exclude_keywords: normalize(filter.exclude_keywords, &[]),
+        languages: normalize(filter.languages, &[]),
+        llm_rubric: filter
+            .llm_rubric
+            .map(|rubric| rubric.trim().to_string())
+            .filter(|rubric| !rubric.is_empty()),
+    }
 }
 
 fn parse_web_watches() -> anyhow::Result<HashMap<String, WebWatchConfig>> {

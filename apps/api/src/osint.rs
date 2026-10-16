@@ -29,11 +29,22 @@ use crate::{
 const MAX_SOURCES: usize = 60;
 const MAX_BYTES: usize = 1_048_576;
 
+mod casebook;
+#[cfg(test)]
+mod casebook_tests;
+mod documents;
+mod jobs;
+#[cfg(test)]
+mod jobs_tests;
 mod research;
+pub use jobs::spawn;
 
 pub fn router() -> Router<AppState> {
     Router::new()
         .merge(research::router())
+        .merge(casebook::router())
+        .merge(documents::router())
+        .merge(jobs::router())
         .route("/api/v2/events/{id}/osint", get(dossier))
         .route(
             "/api/v2/events/{id}/evidence/{article_id}/capture",
@@ -277,9 +288,16 @@ async fn capture(
     details["reported_published_at"] = json!(row.get::<Option<DateTime<Utc>>, _>("published_at"));
     details["archive"] = json!({"status": "not_requested"});
     let sha256 = hex::encode(Sha256::digest(&body));
+    let title: String =
+        sqlx::query_scalar("SELECT representative_title FROM story_clusters WHERE id = $1")
+            .bind(story_id)
+            .fetch_optional(&mut *tx)
+            .await?
+            .ok_or(AppError::NotFound)?;
+    let case_id = casebook::ensure_case(&mut tx, story_id, &title).await?;
     let id: Uuid = sqlx::query_scalar(
-        "INSERT INTO osint_captures (article_id, story_id, captured_at, sha256, body, details)
-        VALUES ($1, $2, $3, $4, $5, $6) RETURNING id",
+        "INSERT INTO osint_captures (article_id, story_id, captured_at, sha256, body, details, case_id)
+        VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id",
     )
     .bind(article_id)
     .bind(story_id)
@@ -287,11 +305,12 @@ async fn capture(
     .bind(&sha256)
     .bind(&body)
     .bind(&details)
+    .bind(case_id)
     .fetch_one(&mut *tx)
     .await?;
     tx.commit().await?;
     Ok(Json(
-        json!({"id": id, "captured_at": captured_at, "sha256": sha256, "byte_length": body.len(), "details": details}),
+        json!({"id": id, "case_id": case_id, "captured_at": captured_at, "sha256": sha256, "byte_length": body.len(), "details": details}),
     ))
 }
 
@@ -313,9 +332,7 @@ async fn fetch_evidence(http: &reqwest::Client, url: &str) -> AppResult<(Vec<u8>
     let headers = HeaderMap::from_iter([
         (
             header::USER_AGENT,
-            "infofetcher/0.1 (OSINT evidence capture)"
-                .parse()
-                .unwrap(),
+            "infofetcher/0.1 (OSINT evidence capture)".parse().unwrap(),
         ),
         (header::ACCEPT_ENCODING, "identity".parse().unwrap()),
     ]);
@@ -405,10 +422,10 @@ async fn export_capture(
     Path(id): Path<Uuid>,
 ) -> AppResult<Response> {
     auth::require_session(&state.pool, &headers).await?;
-    let row = sqlx::query("SELECT id, article_id, story_id, captured_at, sha256, body, details FROM osint_captures WHERE id = $1")
+    let row = sqlx::query("SELECT id, case_id, article_id, story_id, captured_at, sha256, body, details FROM osint_captures WHERE id = $1")
         .bind(id).fetch_optional(&state.pool).await?.ok_or(AppError::NotFound)?;
     let body: Vec<u8> = row.get("body");
-    let export = json!({"format": "rss-osint-evidence-v1", "id": id, "article_id": row.get::<Uuid, _>("article_id"),
+    let export = json!({"format": "rss-osint-evidence-v1", "id": id, "case_id": row.get::<Uuid, _>("case_id"), "article_id": row.get::<Uuid, _>("article_id"),
         "story_id": row.get::<Uuid, _>("story_id"), "captured_at": row.get::<DateTime<Utc>, _>("captured_at"),
         "sha256": row.get::<String, _>("sha256"), "byte_length": body.len(), "body_hex": hex::encode(&body),
         "details": row.get::<Value, _>("details")});
@@ -665,7 +682,7 @@ mod tests {
                 .fetch_one(&pool)
                 .await
                 .unwrap();
-        assert_eq!(count, 0);
+        assert_eq!(count, 1);
         sqlx::query("DELETE FROM story_clusters WHERE id = $1")
             .bind(story)
             .execute(&pool)

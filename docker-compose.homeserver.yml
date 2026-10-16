@@ -13,6 +13,36 @@ services:
       retries: 5
       start_period: 20s
 
+  # 标题向量服务（EmbeddingGemma 2 Q8_0，只加载文本部分），供事件层跨语言召回。
+  embedding:
+    image: ghcr.io/ggml-org/llama.cpp:server@sha256:89f180f16f295ee496fe00924ec2118cae2efec519d1a82c605420af09d2a6df
+    restart: unless-stopped
+    command:
+      - "-hf"
+      - "ggml-org/embeddinggemma-2-GGUF:Q8_0"
+      - "--no-mmproj"
+      - "--embeddings"
+      - "--pooling"
+      - "mean"
+      - "-c"
+      - "2048"
+      - "-b"
+      - "2048"
+      - "-ub"
+      - "2048"
+      - "--threads"
+      - "2"
+      - "--host"
+      - "0.0.0.0"
+      - "--port"
+      - "8080"
+    ports:
+      - "127.0.0.1:${HOST_EMBEDDING_PORT:-18182}:8080"
+    volumes:
+      - embedding-models:/root/.cache/huggingface
+    cpus: 2
+    mem_limit: 2g
+
   postgres:
     ports: !override
       - "127.0.0.1:${HOST_PG_PORT:-15432}:5432"
@@ -41,3 +71,6 @@ services:
       rsshub:
         condition: service_healthy
     ports: !reset []
+
+volumes:
+  embedding-models:

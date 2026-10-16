@@ -55,6 +55,200 @@
       "30"
     ]
   },
+  "x-home-following": {
+    "title": "X · 我的关注",
+    "link": "https://x.com/home",
+    "description": "登录账号的关注时间线，已排除政治异见、药娘、色情和非中英文内容",
+    "args": [
+      "twitter",
+      "timeline",
+      "--type",
+      "following",
+      "--limit",
+      "100"
+    ],
+    "filter": {
+      "exclude_authors": [
+        "whyyoutouzhele",
+        "LIGHTSEEKER1984",
+        "CDTChinese",
+        "DoesXiStepDown",
+        "tankman2002",
+        "only_NFSC",
+        "laoyan86",
+        "GFWfrog",
+        "RJDAIGOGO",
+        "LE77678238",
+        "jiuxingmao",
+        "xiaopengugugu",
+        "Rikka_Ela",
+        "yyqx52000"
+      ],
+      "exclude_keywords": [
+        "药娘",
+        "男娘",
+        "伪娘",
+        "女装大佬",
+        "女装山脉",
+        "跨性别",
+        "跨儿",
+        "mtf",
+        "雌激素",
+        "补佳乐",
+        "色普龙",
+        "环丙孕酮",
+        "习近平",
+        "中共",
+        "共产党",
+        "共匪",
+        "支那",
+        "赵家人",
+        "小粉红",
+        "五毛",
+        "墙国",
+        "六四",
+        "党国",
+        "国女",
+        "女拳",
+        "白左",
+        "网左",
+        "牛子",
+        "自慰",
+        "勃起",
+        "约炮"
+      ],
+      "languages": [
+        "zh",
+        "en"
+      ],
+      "llm_rubric": "保留：\n- AI 与大模型：研究、模型或产品发布、实测对比、Agent 与编程实践、行业与公司动态\n- 软件开发、开源项目、网络/VPS/基础设施、安全漏洞与安全事件\n- 科技公司、半导体与算力产业新闻；有一手信息或具体数据的重要国际新闻\n- CS2 电竞赛事结果与重要转会\n- 有具体事实、数据、链接或可操作经验的内容\n丢弃：\n- 中文政治异见、反共、骂政府，国内社会事件猎奇与情绪宣泄\n- 跨性别、药娘、男娘、女装及相关擦边内容\n- 色情、性暗示\n- 骂战、人身攻击、阴阳怪气、性别对立、纯玩梗、没有信息量的感叹或图片\n- 社会八卦、凶案猎奇\n- 广告、拉人、带货、炒币喊单、抽奖\n- 中文和英文以外的内容"
+    }
+  },
+  "x-home-for-you": {
+    "title": "X · 为你推荐",
+    "link": "https://x.com/home",
+    "description": "登录账号的推荐时间线，按同一标准筛选",
+    "args": [
+      "twitter",
+      "timeline",
+      "--type",
+      "for-you",
+      "--limit",
+      "60"
+    ],
+    "filter": {
+      "exclude_authors": [
+        "whyyoutouzhele",
+        "LIGHTSEEKER1984",
+        "CDTChinese",
+        "DoesXiStepDown",
+        "tankman2002",
+        "only_NFSC",
+        "laoyan86",
+        "GFWfrog",
+        "RJDAIGOGO",
+        "LE77678238",
+        "jiuxingmao",
+        "xiaopengugugu",
+        "Rikka_Ela",
+        "yyqx52000"
+      ],
+      "exclude_keywords": [
+        "药娘",
+        "男娘",
+        "伪娘",
+        "女装大佬",
+        "女装山脉",
+        "跨性别",
+        "跨儿",
+        "mtf",
+        "雌激素",
+        "补佳乐",
+        "色普龙",
+        "环丙孕酮",
+        "习近平",
+        "中共",
+        "共产党",
+        "共匪",
+        "支那",
+        "赵家人",
+        "小粉红",
+        "五毛",
+        "墙国",
+        "六四",
+        "党国",
+        "国女",
+        "女拳",
+        "白左",
+        "网左",
+        "牛子",
+        "自慰",
+        "勃起",
+        "约炮"
+      ],
+      "languages": [
+        "zh",
+        "en"
+      ],
+      "llm_rubric": "保留：\n- AI 与大模型：研究、模型或产品发布、实测对比、Agent 与编程实践、行业与公司动态\n- 软件开发、开源项目、网络/VPS/基础设施、安全漏洞与安全事件\n- 科技公司、半导体与算力产业新闻；有一手信息或具体数据的重要国际新闻\n- CS2 电竞赛事结果与重要转会\n- 有具体事实、数据、链接或可操作经验的内容\n丢弃：\n- 中文政治异见、反共、骂政府，国内社会事件猎奇与情绪宣泄\n- 跨性别、药娘、男娘、女装及相关擦边内容\n- 色情、性暗示\n- 骂战、人身攻击、阴阳怪气、性别对立、纯玩梗、没有信息量的感叹或图片\n- 社会八卦、凶案猎奇\n- 广告、拉人、带货、炒币喊单、抽奖\n- 中文和英文以外的内容"
+    }
+  },
+  "x-ai-researchers": {
+    "title": "X · AI 研究者与工程师",
+    "link": "https://x.com/search?q=(from%3Akarpathy%20OR%20from%3Athsottiaux%20OR%20from%3Asimonw%20OR%20from%3Aswyx%20OR%20from%3Anatolambert%20OR%20from%3Ajeremyphoward%20OR%20from%3ADrJimFan%20OR%20from%3Aemollick%20OR%20from%3Arasbt%20OR%20from%3Alilianweng%20OR%20from%3Apolynoamial%20OR%20from%3A_jasonwei%20OR%20from%3AThom_Wolf%20OR%20from%3Ahardmaru)",
+    "description": "Karpathy、Tibo（Codex）、Simon Willison、Ethan Mollick 等",
+    "args": [
+      "twitter",
+      "search",
+      "(from:karpathy OR from:thsottiaux OR from:simonw OR from:swyx OR from:natolambert OR from:jeremyphoward OR from:DrJimFan OR from:emollick OR from:rasbt OR from:lilianweng OR from:polynoamial OR from:_jasonwei OR from:Thom_Wolf OR from:hardmaru) -filter:replies -filter:nativeretweets",
+      "--product",
+      "live",
+      "--limit",
+      "60"
+    ]
+  },
+  "x-ai-labs-products": {
+    "title": "X · AI 实验室与产品",
+    "link": "https://x.com/search?q=(from%3AGoogleDeepMind%20OR%20from%3AOfficialLoganK%20OR%20from%3Adeepseek_ai%20OR%20from%3AAlibaba_Qwen%20OR%20from%3AMistralAI%20OR%20from%3Aalexalbert__%20OR%20from%3Atestingcatalog%20OR%20from%3A_akhaliq%20OR%20from%3AClementDelangue%20OR%20from%3Acursor_ai%20OR%20from%3AOpenAIDevs%20OR%20from%3Axai)",
+    "description": "DeepMind、Qwen、DeepSeek、Mistral、Cursor 与发布追踪",
+    "args": [
+      "twitter",
+      "search",
+      "(from:GoogleDeepMind OR from:OfficialLoganK OR from:deepseek_ai OR from:Alibaba_Qwen OR from:MistralAI OR from:alexalbert__ OR from:testingcatalog OR from:_akhaliq OR from:ClementDelangue OR from:cursor_ai OR from:OpenAIDevs OR from:xai) -filter:replies -filter:nativeretweets",
+      "--product",
+      "live",
+      "--limit",
+      "60"
+    ]
+  },
+  "x-crypto-news": {
+    "title": "X · Crypto 快讯与链上",
+    "link": "https://x.com/search?q=(from%3AWatcherGuru%20OR%20from%3Atier10k%20OR%20from%3AWuBlockchain%20OR%20from%3Azachxbt%20OR%20from%3APeckShieldAlert%20OR%20from%3Alookonchain%20OR%20from%3AEmberCN%20OR%20from%3Awhale_alert%20OR%20from%3ABitMEXResearch%20OR%20from%3AFarsideUK)",
+    "description": "快讯、链上异动、安全事件与 ETF 资金流",
+    "args": [
+      "twitter",
+      "search",
+      "(from:WatcherGuru OR from:tier10k OR from:WuBlockchain OR from:zachxbt OR from:PeckShieldAlert OR from:lookonchain OR from:EmberCN OR from:whale_alert OR from:BitMEXResearch OR from:FarsideUK) -filter:replies -filter:nativeretweets",
+      "--product",
+      "live",
+      "--limit",
+      "60"
+    ]
+  },
+  "x-polymarket": {
+    "title": "X · Polymarket",
+    "link": "https://x.com/search?q=(from%3APolymarket)",
+    "description": "Polymarket 官方市场动态",
+    "args": [
+      "twitter",
+      "search",
+      "(from:Polymarket) -filter:replies -filter:nativeretweets",
+      "--product",
+      "live",
+      "--limit",
+      "40"
+    ]
+  },
   "bilibili-li-mu-ai": {
     "title": "Bilibili · 跟李沐学AI",
     "link": "https://space.bilibili.com/1567748478",

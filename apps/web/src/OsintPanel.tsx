@@ -1,6 +1,8 @@
-import { useEffect, useRef, useState } from 'react'
+import { lazy, Suspense, useEffect, useRef, useState } from 'react'
 import { api, formatDate } from './api'
-import { OsintResearch } from './OsintResearch'
+
+// Research tooling is only needed after the dossier is opened, so it stays out of the report's first load.
+const OsintResearch = lazy(() => import('./OsintResearch').then((module) => ({ default: module.OsintResearch })))
 
 type Capture = {
   id: string
@@ -110,7 +112,9 @@ export function OsintPanel({ eventId }: { eventId: string }) {
           <h4>待核查</h4>
           <ul>{dossier.gaps.map((gap) => <li key={gap}>{gap}</li>)}</ul>
           <p>哪些原始记录可以支持或推翻该主张？是否把同一声明的转载当作独立报道？</p>
-          <OsintResearch key={eventId} eventId={eventId} title={dossier.title} />
+          <Suspense fallback={<p role="status">正在载入调查工具…</p>}>
+            <OsintResearch key={eventId} eventId={eventId} title={dossier.title} />
+          </Suspense>
           <h4>来源溯源</h4>
           <p>同发布者、同规范链接或相同正文指纹合并为一组；来源质量分仅用于筛选。</p>
           {dossier.sources.map((source) => <details className="osint-source" key={source.article_id}>
@@ -151,6 +155,6 @@ function CaptureRecord({ capture }: { capture: Capture }) {
     <p>{details.archive.status === 'found' ? <a href={publicLink(details.archive.url)} target="_blank" rel="noreferrer">Wayback 存档 · {details.archive.timestamp} UTC</a>
       : details.archive.status === 'not_found' ? 'Wayback 未返回可用存档。' : details.archive.status === 'unavailable' ? 'Wayback 查询失败，存档状态未知。' : '未查询 Wayback。'}</p>
     <a href={`/api/v2/osint/captures/${capture.id}/export`} download>导出证据 JSON</a>
-    <small className="osint-note">哈希用于核对留存内容是否一致，不证明陈述真实。记录随原文保留周期清理，长期留存请导出。</small>
+    <small className="osint-note">哈希用于核对留存内容是否一致，不证明陈述真实。记录独立留存，可在“调查”档案中查阅。</small>
   </div>
 }

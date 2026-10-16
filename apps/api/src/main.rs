@@ -1,14 +1,17 @@
 mod auth;
 mod config;
 mod db;
+mod editorial;
 mod error;
 mod event_agent;
 mod extractor;
 mod feeds;
 mod hub;
+mod intel;
 mod intelligence;
 mod keywords;
 mod llm;
+mod mcp;
 mod models;
 mod net;
 mod opml;
@@ -17,7 +20,9 @@ mod push;
 mod retention;
 mod routes;
 mod search;
+mod semantic;
 mod security;
+mod source_alerts;
 mod state;
 mod translation;
 mod websub;
@@ -92,6 +97,20 @@ async fn main() -> anyhow::Result<()> {
             tracing::info!(%article_id, %story_id, "article story intelligence rebuilt");
             Ok(())
         }
+        "run-editorial-once" => {
+            let assessed = editorial::assess::run_turn(&state).await?;
+            let feeds = editorial::sources::refresh(&state).await?;
+            tracing::info!(assessed, feeds, "editorial turn completed");
+            Ok(())
+        }
+        "publish-brief-edition" => {
+            let date = chrono::Utc::now()
+                .with_timezone(&editorial::edition::local_offset(&state.config))
+                .date_naive();
+            let edition = editorial::edition::publish(&state, date).await?;
+            tracing::info!(%date, items = edition.item_count, "brief edition published");
+            Ok(())
+        }
         "run-event-agent-once" => {
             let processed = event_agent::run_once(&state).await?;
             tracing::info!(processed, "event wire agent turn completed");
@@ -136,9 +155,20 @@ async fn build_state(config: Arc<Config>, start_worker: bool) -> anyhow::Result<
         translation_semaphore: Arc::new(tokio::sync::Semaphore::new(translation_max_concurrency)),
     };
     if start_worker {
+        if state.search.needs_rebuild() {
+            let state = state.clone();
+            tokio::spawn(async move {
+                match worker::reindex_all(&state).await {
+                    Ok(()) => tracing::info!("search index rebuilt after schema change"),
+                    Err(error) => tracing::error!(%error, "search index rebuild failed"),
+                }
+            });
+        }
         worker::spawn_worker(state.clone(), worker_rx);
         event_agent::spawn(state.clone());
+        editorial::spawn(state.clone());
         retention::spawn(state.clone());
+        osint::spawn(state.clone());
     }
     Ok(state)
 }

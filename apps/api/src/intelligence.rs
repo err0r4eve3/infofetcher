@@ -316,6 +316,24 @@ fn content_noise_penalty(content: &str) -> i32 {
 }
 
 pub async fn assign_story_cluster(state: &AppState, article_id: Uuid) -> AppResult<Uuid> {
+    assign_story_cluster_with_preference(state, article_id, None).await
+}
+
+/// 规则没有命中任何簇时，把文章挂到已确认的同事件簇（由 `semantic` 召回并确认）。
+/// 规则命中时仍以规则为准；目标簇已不存在时按原规则新建。
+pub async fn link_article_to_story(
+    state: &AppState,
+    article_id: Uuid,
+    story_id: Uuid,
+) -> AppResult<Uuid> {
+    assign_story_cluster_with_preference(state, article_id, Some(story_id)).await
+}
+
+async fn assign_story_cluster_with_preference(
+    state: &AppState,
+    article_id: Uuid,
+    preferred_story_id: Option<Uuid>,
+) -> AppResult<Uuid> {
     let mut transaction = state.pool.begin().await?;
     sqlx::query("SELECT pg_advisory_xact_lock($1)")
         .bind(STORY_ASSIGNMENT_LOCK_KEY)
@@ -470,6 +488,10 @@ pub async fn assign_story_cluster(state: &AppState, article_id: Uuid) -> AppResu
     let mut exact_matches = HashSet::new();
     for row in candidates {
         let candidate_id = row.get::<Uuid, _>("id");
+        // 指定目标簇时，文章自己所在的单篇簇不参与规则比较，否则规则总会把它留在原地。
+        if preferred_story_id.is_some() && Some(candidate_id) == old_story_id {
+            continue;
+        }
         let candidate_key = row.get::<String, _>("story_key");
         let score = online_story_match_score(
             &title,
@@ -499,6 +521,14 @@ pub async fn assign_story_cluster(state: &AppState, article_id: Uuid) -> AppResu
         best.filter(|(_, score, _, _, _)| *score >= 1.0)
     {
         tracing::debug!(article_id = %article_id, story_id = %id, similarity = score, "article joined story cluster");
+        (id, false)
+    } else if let Some(id) = preferred_story_id
+        && sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM story_clusters WHERE id = $1)")
+            .bind(id)
+            .fetch_one(&mut *transaction)
+            .await?
+    {
+        tracing::debug!(article_id = %article_id, story_id = %id, "article linked to confirmed same-event story");
         (id, false)
     } else {
         let row = sqlx::query(

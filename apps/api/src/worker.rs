@@ -24,6 +24,7 @@ use crate::{
     llm::{SummarySource, summarize_sources},
     models::SearchDocument,
     net::{get_with_safe_redirects, read_response_limited},
+    source_alerts::{self, FeedAlert},
     state::AppState,
     websub,
 };
@@ -403,7 +404,7 @@ async fn run_claimed_job(state: &AppState, job: WorkerJob) -> AppResult<()> {
                     "worker 任务租约已失效，拒绝记录旧失败".to_string(),
                 ));
             }
-            record_command_failure(
+            let feed_failures = record_command_failure(
                 &mut transaction,
                 &job.command,
                 &err,
@@ -414,6 +415,18 @@ async fn run_claimed_job(state: &AppState, job: WorkerJob) -> AppResult<()> {
             )
             .await?;
             transaction.commit().await?;
+            if let (WorkerCommand::FetchFeed(feed_id), Some(failures)) = (&job.command, feed_failures)
+                && source_alerts::should_alert_failure(failures)
+            {
+                source_alerts::spawn_feed_alert(
+                    state,
+                    *feed_id,
+                    FeedAlert::Failing {
+                        failures,
+                        error: err.to_string(),
+                    },
+                );
+            }
             Err(err)
         }
     }
@@ -468,7 +481,8 @@ async fn record_command_failure(
     delay_seconds: i64,
     run_token: Uuid,
     defer_to_feed_schedule: bool,
-) -> AppResult<()> {
+) -> AppResult<Option<i32>> {
+    let mut feed_failures = None;
     match command {
         WorkerCommand::FetchFeed(feed_id) => {
             if defer_to_feed_schedule {
@@ -486,7 +500,9 @@ async fn record_command_failure(
                 .fetch_optional(&mut **transaction)
                 .await?;
                 if let Some(row) = failures {
-                    tracing::warn!(feed_id = %feed_id, failures = row.get::<i32, _>("consecutive_failures"), error = %err, "feed failure recorded");
+                    let failures = row.get::<i32, _>("consecutive_failures");
+                    tracing::warn!(feed_id = %feed_id, failures, error = %err, "feed failure recorded");
+                    feed_failures = Some(failures);
                 }
             } else if terminal {
                 sqlx::query(
@@ -530,7 +546,40 @@ async fn record_command_failure(
             .await?;
         }
     }
-    Ok(())
+    Ok(feed_failures)
+}
+
+// The previous failure count is read in a locked subquery joined into the UPDATE. A CTE read from
+// RETURNING runs after this statement changed the row, so it sees nothing and yields NULL.
+const FEED_NOT_MODIFIED_SQL: &str = "UPDATE feeds f
+     SET last_fetched_at = now(), last_success_at = now(), last_error = NULL,
+         consecutive_failures = 0,
+         next_fetch_at = now() + (f.fetch_interval_minutes || ' minutes')::interval,
+         updated_at = now()
+     FROM (SELECT id, consecutive_failures FROM feeds WHERE id = $1 FOR UPDATE) previous
+     WHERE f.id = previous.id
+     RETURNING previous.consecutive_failures";
+
+const FEED_FETCHED_SQL: &str = "UPDATE feeds f
+     SET etag = $2, last_modified = $3,
+         last_fetched_at = now(), last_success_at = now(), last_error = NULL,
+         consecutive_failures = 0,
+         next_fetch_at = now() + (f.fetch_interval_minutes || ' minutes')::interval,
+         updated_at = now()
+     FROM (SELECT id, consecutive_failures FROM feeds WHERE id = $1 FOR UPDATE) previous
+     WHERE f.id = previous.id
+     RETURNING previous.consecutive_failures";
+
+fn alert_feed_recovery(state: &AppState, feed_id: Uuid, previous_failures: Option<i32>) {
+    if let Some(previous_failures) = previous_failures
+        && source_alerts::should_alert_recovery(previous_failures)
+    {
+        source_alerts::spawn_feed_alert(
+            state,
+            feed_id,
+            FeedAlert::Recovered { previous_failures },
+        );
+    }
 }
 
 pub async fn fetch_all_once(state: &AppState) -> AppResult<()> {
@@ -634,17 +683,11 @@ pub async fn fetch_feed_by_id(state: &AppState, feed_id: Uuid) -> AppResult<()> 
         )
         .await?;
         if response.status() == reqwest::StatusCode::NOT_MODIFIED {
-            sqlx::query(
-                "UPDATE feeds
-                 SET last_fetched_at = now(), last_success_at = now(), last_error = NULL,
-                     consecutive_failures = 0,
-                     next_fetch_at = now() + (fetch_interval_minutes || ' minutes')::interval,
-                     updated_at = now()
-                 WHERE id = $1",
-            )
+            let previous_failures = sqlx::query_scalar::<_, i32>(FEED_NOT_MODIFIED_SQL)
             .bind(feed_id)
-            .execute(&state.pool)
+            .fetch_optional(&state.pool)
             .await?;
+            alert_feed_recovery(state, feed_id, previous_failures);
             return Ok(());
         }
         if !response.status().is_success() {
@@ -746,6 +789,7 @@ pub async fn fetch_feed_by_id(state: &AppState, feed_id: Uuid) -> AppResult<()> 
         .await?;
         if upserted.should_index {
             assign_story_cluster(state, upserted.id).await?;
+            crate::semantic::spawn_link(state, upserted.id);
             changed_article_ids.push(upserted.id);
             search_documents.push(SearchDocument {
                 id: upserted.id,
@@ -763,20 +807,13 @@ pub async fn fetch_feed_by_id(state: &AppState, feed_id: Uuid) -> AppResult<()> 
         keywords::process_article_keyword_rules(state, article_id).await?;
     }
 
-    sqlx::query(
-        "UPDATE feeds
-         SET etag = $2, last_modified = $3,
-             last_fetched_at = now(), last_success_at = now(), last_error = NULL,
-             consecutive_failures = 0,
-             next_fetch_at = now() + (fetch_interval_minutes || ' minutes')::interval,
-             updated_at = now()
-         WHERE id = $1",
-    )
+    let previous_failures = sqlx::query_scalar::<_, i32>(FEED_FETCHED_SQL)
     .bind(feed_id)
     .bind(&etag)
     .bind(&last_modified)
-    .execute(&state.pool)
+    .fetch_optional(&state.pool)
     .await?;
+    alert_feed_recovery(state, feed_id, previous_failures);
 
     if let Err(err) = websub::maybe_subscribe(state, feed_id).await {
         tracing::warn!(feed_id = %feed_id, error = %err, "WebSub subscription failed");
@@ -1453,6 +1490,53 @@ pub async fn reindex_all(state: &AppState) -> AppResult<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    #[ignore = "requires RSS_OSINT_TEST_DATABASE_URL pointing to a disposable migrated database"]
+    async fn feed_success_updates_return_previous_failures() {
+        let pool = sqlx::PgPool::connect(&std::env::var("RSS_OSINT_TEST_DATABASE_URL").unwrap())
+            .await
+            .unwrap();
+        let feed_id = sqlx::query_scalar::<_, Uuid>(
+            "INSERT INTO feeds (title, feed_url, consecutive_failures)
+             VALUES ('failure count', $1, 4) RETURNING id",
+        )
+        .bind(format!("https://feeds.example/{}", Uuid::new_v4()))
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        let not_modified = sqlx::query_scalar::<_, i32>(FEED_NOT_MODIFIED_SQL)
+            .bind(feed_id)
+            .fetch_optional(&pool)
+            .await
+            .unwrap();
+        assert_eq!(not_modified, Some(4));
+        sqlx::query("UPDATE feeds SET consecutive_failures = 3 WHERE id = $1")
+            .bind(feed_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let fetched = sqlx::query_scalar::<_, i32>(FEED_FETCHED_SQL)
+            .bind(feed_id)
+            .bind(Some("etag"))
+            .bind(None::<String>)
+            .fetch_optional(&pool)
+            .await
+            .unwrap();
+        assert_eq!(fetched, Some(3));
+        let failures =
+            sqlx::query_scalar::<_, i32>("SELECT consecutive_failures FROM feeds WHERE id = $1")
+                .bind(feed_id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(failures, 0);
+        sqlx::query("DELETE FROM feeds WHERE id = $1")
+            .bind(feed_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
 
     #[test]
     fn summary_selection_preserves_primary_and_distinct_publishers() {

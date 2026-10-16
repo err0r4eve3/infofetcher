@@ -1,7 +1,6 @@
 import {
   ArrowLeft,
   ArrowRight,
-  BellRing,
   Bookmark,
   BookOpen,
   CheckCircle2,
@@ -24,7 +23,6 @@ import {
   Search,
   Settings,
   ShieldCheck,
-  Sparkles,
   Sun,
   Target,
   Trash2,
@@ -33,8 +31,13 @@ import {
   XCircle,
   type LucideIcon
 } from 'lucide-react'
-import { FormEvent, memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { FormEvent, lazy, memo, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { OsintPanel } from './OsintPanel'
+import { ReportFilterControls } from './ReportFilterControls'
+import { EMPTY_REPORT_FILTERS, filterReportItems, hasReportFilters, type ReportFilters } from './reportFilters'
+import { SituationBoard } from './SituationBoard'
+import { EvidenceComparison, SourceCoverage } from './NewsCoverage'
+import { coverageLabel, matchesCoverage, type CoverageFilter } from './coverageModel'
 import {
   api,
   ApiError,
@@ -42,13 +45,17 @@ import {
   EventDetail,
   formatDate,
   NowBrief,
+  takePrefetched,
   WireResponse,
   Watch,
   WatchRequest
 } from './api'
 
-type RadarView = 'now' | 'wire' | 'watches'
+const OsintCasebook = lazy(() => import('./OsintCasebook').then((module) => ({ default: module.OsintCasebook })))
+
+type RadarView = 'now' | 'wire' | 'watches' | 'investigations'
 type BriefWorkflow = 'pending' | 'saved' | 'done' | 'all'
+type ReportLayout = 'list' | 'board'
 type Theme = 'light' | 'dark'
 type NavigationMode = 'push' | 'replace'
 type ReportSectionKey = EventBriefItem['report_section']
@@ -90,12 +97,16 @@ function writeTimedCache<T>(cache: Map<string, TimedCacheEntry<T>>, key: string,
 function readRadarView(): RadarView {
   if (typeof window === 'undefined') return 'now'
   const value = new URLSearchParams(window.location.search).get('radar')
-  return value === 'wire' || value === 'watches' ? value : 'now'
+  return value === 'wire' || value === 'watches' || value === 'investigations' ? value : 'now'
 }
 
 function readRadarEventId(): string | null {
   if (typeof window === 'undefined') return null
   return new URLSearchParams(window.location.search).get('event')
+}
+
+function readReportLayout(): ReportLayout {
+  return typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('report_layout') === 'board' ? 'board' : 'list'
 }
 
 function writeRadarLocation(view: RadarView, eventId: string | null, mode: NavigationMode) {
@@ -160,6 +171,10 @@ export function WorldRadar({
 }) {
   const [view, setView] = useState<RadarView>(readRadarView)
   const [workflow, setWorkflow] = useState<BriefWorkflow>('pending')
+  const [reportLayout, setReportLayout] = useState<ReportLayout>(readReportLayout)
+  const [topic, setTopic] = useState<ReportSectionKey | 'all'>('all')
+  const [coverage, setCoverage] = useState<CoverageFilter>('all')
+  const [reportFilters, setReportFilters] = useState<ReportFilters>(EMPTY_REPORT_FILTERS)
   const [reportHours, setReportHours] = useState(12)
   const [wireHours, setWireHours] = useState(24)
   const [brief, setBrief] = useState<NowBrief | null>(() => (
@@ -238,8 +253,10 @@ export function WorldRadar({
     setBrief((current) => current?.window_hours === reportHours ? current : null)
     setLoading(true)
     setError(null)
+    const path = `/api/v2/brief/now?hours=${reportHours}`
     try {
-      const next = await api<NowBrief>(`/api/v2/brief/now?hours=${reportHours}`, { signal: controller.signal })
+      const next = (force ? null : await takePrefetched<NowBrief>(path))
+        ?? await api<NowBrief>(path, { signal: controller.signal })
       if (controller.signal.aborted) return
       writeTimedCache(briefCache, cacheKey, next)
       setBrief(next)
@@ -313,6 +330,7 @@ export function WorldRadar({
     function onPopState() {
       setView(readRadarView())
       setSelectedEventId(readRadarEventId())
+      setReportLayout(readReportLayout())
     }
     window.addEventListener('popstate', onPopState)
     return () => window.removeEventListener('popstate', onPopState)
@@ -322,6 +340,7 @@ export function WorldRadar({
     if (!selectedEventId) {
       setDetail(null)
       setDetailError(null)
+      setDetailLoading(false)
       return
     }
     const cacheKey = `${userName}:${selectedEventId}`
@@ -398,7 +417,7 @@ export function WorldRadar({
     [briefItems, savedEventIds]
   )
   const completionPercent = briefItems.length ? Math.round(processedCount / briefItems.length * 100) : 0
-  const visibleItems = useMemo(() => {
+  const workflowItems = useMemo(() => {
     if (workflow === 'saved') return savedEvents
     if (workflow === 'done') return briefItems.filter((item) => item.feedback === 'known')
     if (workflow === 'all') return briefItems
@@ -407,6 +426,9 @@ export function WorldRadar({
       && !savedEventIds.has(item.event_id)
     ))
   }, [briefItems, savedEventIds, savedEvents, workflow])
+  const topicItems = useMemo(() => workflowItems.filter((item) => topic === 'all' || item.report_section === topic), [workflowItems, topic])
+  const matchingItems = useMemo(() => filterReportItems(topicItems, reportFilters), [topicItems, reportFilters])
+  const visibleItems = useMemo(() => matchingItems.filter((item) => matchesCoverage(item, coverage)), [matchingItems, coverage])
   const visibleReportSections = useMemo(() => {
     let index = 0
     return REPORT_SECTIONS.map((section) => ({
@@ -652,10 +674,49 @@ export function WorldRadar({
     target?.scrollIntoView({ block: 'center' })
   }
 
+  function changeReportFilters(next: ReportFilters) {
+    setReportFilters(next)
+    writeRadarLocation(view, null, 'replace')
+    setSelectedEventId(null)
+  }
+
+  function filterReport(nextTopic: ReportSectionKey | 'all', nextCoverage: CoverageFilter) {
+    if (nextTopic === topic && nextCoverage === coverage) return
+    setTopic(nextTopic)
+    setCoverage(nextCoverage)
+    // An explicit event link must not keep a filtered-out event in the inspector.
+    writeRadarLocation(view, null, 'replace')
+    setSelectedEventId(null)
+  }
+
   function openWireEvent(eventId: string) {
     writeRadarLocation('now', eventId, 'push')
     setSelectedEventId(eventId)
     setView('now')
+    changeReportLayout('list', eventId, 'replace')
+  }
+
+  function changeReportLayout(next: ReportLayout, eventId = selectedEventId, mode: NavigationMode = 'push') {
+    const url = new URL(window.location.href)
+    if (next === 'board') url.searchParams.set('report_layout', 'board')
+    else url.searchParams.delete('report_layout')
+    if (eventId) url.searchParams.set('event', eventId)
+    else url.searchParams.delete('event')
+    window.history[mode === 'push' ? 'pushState' : 'replaceState']({ ...window.history.state }, '', url)
+    setReportLayout(next)
+  }
+
+  function openSituationEvent(eventId: string) {
+    setWorkflow('all')
+    setTopic('all')
+    setCoverage('all')
+    setSelectedEventId(eventId)
+    selectedCardRef.current = null
+    changeReportLayout('list', eventId)
+    window.requestAnimationFrame(() => {
+      inspectorRef.current?.focus({ preventScroll: true })
+      inspectorRef.current?.scrollIntoView({ block: 'start' })
+    })
   }
 
   return (
@@ -675,6 +736,9 @@ export function WorldRadar({
             <Target size={16} /><span>关注</span>
             {activeWatches.length > 0 && <b>{activeWatches.length}</b>}
           </button>
+          <button type="button" className={view === 'investigations' ? 'active' : ''} aria-label="调查" aria-current={view === 'investigations' ? 'page' : undefined} onClick={() => navigateRadar('investigations')}>
+            <FileSearch size={16} /><span>调查</span>
+          </button>
           <button type="button" aria-label="全部资料" onClick={() => onOpenLibrary()}>
             <Library size={16} /><span>全部资料</span>
           </button>
@@ -690,7 +754,7 @@ export function WorldRadar({
                   enterKeyHint="search"
                   autoComplete="off"
                   aria-keyshortcuts="Control+k Meta+k /"
-                  onKeyDown={(event) => { if (event.key === 'Escape') setQuestion('') }}
+                  onKeyDown={(event) => { if (event.key === 'Escape' && !event.nativeEvent.isComposing) setQuestion('') }}
                   value={question}
                   onChange={(event) => setQuestion(event.target.value)}
                   placeholder="搜索证据或问题"
@@ -719,18 +783,28 @@ export function WorldRadar({
         </div>
       )}
 
-      {view === 'now' ? (
+      {view === 'investigations' ? (
+        <Suspense fallback={<main id="radar-main" className="osint-casebook" tabIndex={-1}><RadarSkeleton label="正在读取档案" /></main>}>
+          <OsintCasebook />
+        </Suspense>
+      ) : view === 'now' ? (
         <main id="radar-main" className="radar-main" tabIndex={-1}>
           <section className="report-heading" aria-labelledby="report-title">
             <h1 id="report-title" className="visually-hidden">近 {reportHours} 小时</h1>
-            <label className="report-period">
-              <Clock3 size={17} aria-hidden="true" />
-              <select aria-label="报告覆盖范围" value={reportHours} onChange={(event) => setReportHours(Number(event.target.value))}>
-                <option value={12}>近 12 小时</option>
-                <option value={24}>近 24 小时</option>
-              </select>
-              <ChevronDown size={14} aria-hidden="true" />
-            </label>
+            <div className="report-view-controls">
+              <div className="report-layout-toggle" aria-label="报告布局">
+                <button type="button" aria-pressed={reportLayout === 'list'} onClick={() => changeReportLayout('list')}>列表</button>
+                <button type="button" aria-pressed={reportLayout === 'board'} onClick={() => changeReportLayout('board')}>态势</button>
+              </div>
+              <label className="report-period">
+                <Clock3 size={17} aria-hidden="true" />
+                <select aria-label="报告覆盖范围" value={reportHours} onChange={(event) => setReportHours(Number(event.target.value))}>
+                  <option value={12}>近 12 小时</option>
+                  <option value={24}>近 24 小时</option>
+                </select>
+                <ChevronDown size={14} aria-hidden="true" />
+              </label>
+            </div>
             <div className="report-heading-actions">
               {brief && (
                 <time dateTime={brief.generated_at} title={`${formatDate(brief.generated_at)} 生成`} aria-label={`${formatDate(brief.generated_at)} 生成`}>
@@ -787,7 +861,25 @@ export function WorldRadar({
             </div>
           </section>
 
-          {brief && (
+          {briefError && <LoadError message={brief ? `${briefError}；当前显示上次成功生成的报告。` : briefError} onRetry={() => void loadBrief(true)} busy={loading} />}
+
+          <div hidden={reportLayout !== 'board'} aria-busy={loading}>
+            {brief ? <SituationBoard key={userName} brief={brief} userName={userName} filters={reportFilters} onFiltersChange={changeReportFilters} onOpenEvent={openSituationEvent} />
+              : loading ? <RadarSkeleton label="正在读取态势" /> : null}
+          </div>
+
+          {brief && reportLayout === 'list' && (
+            <nav className="report-topics" aria-label="报告主题筛选">
+              <button type="button" aria-pressed={topic === 'all'} onClick={() => filterReport('all', coverage)}>全部主题<span>{workflowItems.length}</span></button>
+              {REPORT_SECTIONS.filter((section) => section.key === topic || workflowItems.some((item) => item.report_section === section.key)).map((section) => (
+                <button type="button" key={section.key} aria-pressed={topic === section.key} onClick={() => filterReport(section.key, coverage)}>
+                  {section.label}<span>{workflowItems.filter((item) => item.report_section === section.key).length}</span>
+                </button>
+              ))}
+            </nav>
+          )}
+
+          {brief && reportLayout === 'list' && (
             <section className="brief-workflow" aria-label="报告筛选">
               <div className="brief-workflow-tabs" aria-label="报告状态筛选">
                 {([
@@ -804,9 +896,17 @@ export function WorldRadar({
             </section>
           )}
 
-          <div className="radar-workspace">
+          <div className="radar-workspace" hidden={reportLayout !== 'list'}>
             <section ref={eventFeedRef} className="event-feed" aria-label="全面事件报告" aria-busy={loading} tabIndex={-1}>
-              {briefError && <LoadError message={briefError} onRetry={() => void loadBrief(true)} busy={loading} />}
+              {brief && <ReportFilterControls items={workflowItems} value={reportFilters} onChange={changeReportFilters} />}
+              {brief && <div className="coverage-filters" aria-label="来源覆盖筛选">
+                <div>{([
+                  ['all', '全部覆盖'], ['multiple', '多源报道'], ['single', '单一来源']
+                ] as const).map(([value, label]) => <button type="button" key={value} aria-pressed={coverage === value} onClick={() => filterReport(topic, value)}>
+                  {label}<span>{matchingItems.filter((item) => matchesCoverage(item, value)).length}</span>
+                </button>)}</div>
+                <span className="coverage-result-count" role="status">{visibleItems.length} 项事件</span>
+              </div>}
               {loading && !brief ? (
                 <RadarSkeleton label="正在生成全面报告" />
               ) : visibleItems.length ? (
@@ -836,7 +936,10 @@ export function WorldRadar({
                   ))}
                 </div>
               ) : (
-                !briefError && <BriefWorkflowEmpty workflow={workflow} hasBriefItems={briefItems.length > 0} />
+                !briefError && (topic !== 'all' || coverage !== 'all' || hasReportFilters(reportFilters) ? <div className="radar-empty">
+                  <FileSearch aria-hidden="true" /><p>没有符合筛选的事件</p>
+                  <button type="button" className="radar-refresh" onClick={() => { filterReport('all', 'all'); changeReportFilters(EMPTY_REPORT_FILTERS) }}>清除筛选</button>
+                </div> : <BriefWorkflowEmpty workflow={workflow} hasBriefItems={briefItems.length > 0} />)
               )}
             </section>
 
@@ -848,6 +951,7 @@ export function WorldRadar({
                 <RadarSkeleton compact label="正在读取事件时间线" />
               ) : detail ? (
                 <EventInspector
+                  key={detail.event.event_id}
                   detail={detail}
                   saving={saving}
                   saved={savedEventIds.has(detail.event.event_id)}
@@ -878,69 +982,56 @@ export function WorldRadar({
         </main>
       ) : view === 'wire' ? (
         <main id="radar-main" className="wire-main" tabIndex={-1}>
-          <section className="wire-heading">
-            <div>
-              <p className="radar-context"><span aria-hidden="true" />持续核验</p>
-              <h1>快讯</h1>
+          <section className="wire-heading" aria-labelledby="wire-title">
+            <h1 id="wire-title" className="visually-hidden">快讯</h1>
+            <div className="radar-segment" aria-label="快讯时间范围">
+              {[12, 24, 72].map((value) => (
+                <button type="button" key={value} className={wireHours === value ? 'active' : ''} aria-pressed={wireHours === value} onClick={() => setWireHours(value)}>
+                  {value < 24 ? `${value}h` : `${value / 24}d`}
+                </button>
+              ))}
             </div>
-            <div className="radar-controls">
-              <div className="radar-segment" aria-label="快讯时间范围">
-                {[12, 24, 72].map((value) => (
-                  <button type="button" key={value} className={wireHours === value ? 'active' : ''} aria-pressed={wireHours === value} onClick={() => setWireHours(value)}>
-                    {value < 24 ? `${value}h` : `${value / 24}d`}
-                  </button>
-                ))}
+            {wire && (
+              <div className="wire-agent-status" aria-label="事件 Agent 状态">
+                <span><strong>{wire.stats.published}</strong> 已发布</span>
+                <span><strong>{wire.stats.pending}</strong> 待处理</span>
+                <span><strong>{wire.stats.running}</strong> 核验中</span>
+                {wire.stats.skipped > 0 && <span><strong>{wire.stats.skipped}</strong> 未发布</span>}
+                {wire.stats.failed > 0 && <span className="failed"><strong>{wire.stats.failed}</strong> 失败</span>}
               </div>
-              <button type="button" className="radar-refresh" onClick={() => void loadWire(true)} disabled={wireLoading}>
-                <RefreshCw size={16} className={wireLoading ? 'spin' : ''} />刷新
-              </button>
-            </div>
+            )}
+            <button type="button" className="report-icon-button" onClick={() => void loadWire(true)} disabled={wireLoading} title="刷新快讯" aria-label="刷新快讯">
+              <RefreshCw size={18} className={wireLoading ? 'spin' : ''} aria-hidden="true" />
+            </button>
           </section>
-          {wire && (
-            <div className="wire-agent-status" aria-label="事件 Agent 状态">
-              <span><strong>{wire.stats.published}</strong> 已发布</span>
-              <span><strong>{wire.stats.pending}</strong> 待处理</span>
-              <span><strong>{wire.stats.running}</strong> 核验中</span>
-              {wire.stats.skipped > 0 && <span><strong>{wire.stats.skipped}</strong> 未发布</span>}
-              {wire.stats.failed > 0 && <span className="failed"><strong>{wire.stats.failed}</strong> 失败</span>}
-            </div>
-          )}
           <section className="wire-feed" aria-label="事件快讯" aria-busy={wireLoading}>
             {wireError && <LoadError message={wireError} onRetry={() => void loadWire(true)} busy={wireLoading} />}
             {wireLoading && !wire ? (
               <RadarSkeleton label="正在更新" />
             ) : wire?.items.length ? wire.items.map((item) => (
-              <button
-                type="button"
-                className={`wire-item status-${item.verification_status}`}
-                key={item.event_id}
-                onClick={() => openWireEvent(item.event_id)}
-              >
-                <div className="wire-time">{formatDate(item.published_at)}</div>
+              <article className={`wire-item status-${item.verification_status}`} key={item.event_id}>
+                <time className="wire-time" dateTime={item.published_at}>{formatDate(item.published_at)}</time>
                 <div className="wire-copy">
-                  <p>{item.message}</p>
+                  <h2>
+                    <button type="button" className="wire-item-open" onClick={() => openWireEvent(item.event_id)}>{item.message}</button>
+                  </h2>
                   <div>
-                    <span className="wire-verification"><ShieldCheck size={13} />{item.verification_label}</span>
+                    <span className="wire-verification"><ShieldCheck size={13} aria-hidden="true" />{item.verification_label}</span>
                     <span>{item.cited_source_count}/{item.source_count} 源支撑</span>
                     <span>材料分 {item.verification_score}</span>
                   </div>
                   <small>{item.verification_reason}</small>
                 </div>
-                <ArrowRight size={17} />
-              </button>
+                <ArrowRight size={17} aria-hidden="true" />
+              </article>
             )) : (
-              !wireError && <div className="radar-empty"><Radio />暂无快讯</div>
+              !wireError && <div className="radar-empty"><Radio aria-hidden="true" />暂无快讯</div>
             )}
           </section>
         </main>
       ) : (
         <main id="radar-main" className="watch-main" tabIndex={-1}>
-          <section className="watch-heading">
-            <div>
-              <h1>关注</h1>
-            </div>
-            <BellRing size={34} />
-          </section>
+          <h1 className="visually-hidden">关注</h1>
           <form className="watch-create" onSubmit={createWatch}>
             <label>
               关注名称
@@ -988,6 +1079,8 @@ export function WorldRadar({
   )
 }
 
+// The card is an article so its title stays a navigable heading; only the title button is interactive,
+// and its ::after overlay extends the hit area to the whole card.
 const EventCard = memo(function EventCard({
   item,
   index,
@@ -1003,33 +1096,31 @@ const EventCard = memo(function EventCard({
 }) {
   const stateClass = item.feedback === 'known' ? ' completed' : saved ? ' saved' : ''
   return (
-    <button type="button" className={`event-card${active ? ' active' : ''}${stateClass}`} onClick={(event) => onSelect(item.event_id, event.currentTarget)} aria-pressed={active}>
-      <span className="event-index">{String(index).padStart(2, '0')}</span>
+    <article className={`event-card${active ? ' active' : ''}${stateClass}`}>
+      <span className="event-index" aria-hidden="true">{String(index).padStart(2, '0')}</span>
       <div className="event-card-body">
         <div className="event-meta">
           <RevisionBadge type={item.revision_type} />
-          {saved && <span className="workflow-state"><Bookmark size={13} />稍后</span>}
-          {item.feedback === 'known' && <span className="workflow-state"><CheckCircle2 size={13} />已完成</span>}
-          <span><Clock3 size={13} />{formatDate(item.published_at)}</span>
-          <span><ShieldCheck size={13} />{item.confidence_label}</span>
+          {saved && <span className="workflow-state"><Bookmark size={13} aria-hidden="true" />稍后</span>}
+          {item.feedback === 'known' && <span className="workflow-state"><CheckCircle2 size={13} aria-hidden="true" />已完成</span>}
+          <span><Clock3 size={13} aria-hidden="true" /><time dateTime={item.published_at}>{formatDate(item.published_at)}</time></span>
+          <span><ShieldCheck size={13} aria-hidden="true" />{item.confidence_label}</span>
+          {item.editorial_score != null && <span title="按内容类型的评分标准给出的 0–10 分">评审 {item.editorial_score.toFixed(1)}</span>}
         </div>
-        <h2>{item.title}</h2>
+        <h3>
+          <button type="button" className="event-card-select" aria-current={active ? 'true' : undefined} onClick={(event) => onSelect(item.event_id, event.currentTarget)}>
+            {item.title}
+          </button>
+        </h3>
         <p>{item.what_happened}</p>
-        <div className="event-reasons">
-          <span><TrendingUp size={14} />{item.why_now}</span>
-          <span><Sparkles size={14} />{item.why_it_matters}</span>
-        </div>
+        <SourceCoverage item={item} />
         <div className="event-card-footer">
-          <div>
-            <b>{item.total_score}</b><small>综合</small>
-            <b>{item.confidence_score}</b><small>可信</small>
-            <b>{item.independent_source_count}</b><small>来源</small>
-          </div>
+          <span className="event-change"><TrendingUp size={14} aria-hidden="true" />{item.why_now}</span>
           {item.watch_names.map((watch) => <span className="watch-hit" key={watch}>命中 {watch}</span>)}
         </div>
       </div>
-      <ArrowRight className="event-open" size={18} />
-    </button>
+      <ArrowRight className="event-open" size={18} aria-hidden="true" />
+    </article>
   )
 })
 
@@ -1055,11 +1146,13 @@ function EventInspector({
   onTrack: () => Promise<void>
 }) {
   const { event } = detail
+  const [inspectorView, setInspectorView] = useState<'overview' | 'coverage' | 'timeline'>('overview')
+  const inspectorTabs = [['overview', '概览'], ['coverage', '报道对照'], ['timeline', '时间线']] as const
   return (
     <div className="event-inspector-content">
       <div className="inspector-heading">
         <RevisionBadge type={event.revision_type} />
-        <span>{event.independent_source_count} 个订阅源去重 · 可信度 {event.confidence_score} · 来源质量 {event.source_quality_score}</span>
+        <span>{coverageLabel(event.independent_source_count)} · {detail.evidence.length} 条可读材料</span>
         <button type="button" disabled={saving} onClick={() => void onRegenerate()}>
           <RefreshCw size={13} />重新核验
         </button>
@@ -1076,6 +1169,17 @@ function EventInspector({
           <Target size={16} />{tracked ? '持续追踪中' : '追踪事件'}
         </button>
       </div>
+      <div className="inspector-tabs" role="tablist" aria-label="事件详情视图" onKeyDown={(e) => {
+        const current = inspectorTabs.findIndex(([value]) => value === inspectorView)
+        const next = e.key === 'ArrowRight' ? (current + 1) % 3 : e.key === 'ArrowLeft' ? (current + 2) % 3 : e.key === 'Home' ? 0 : e.key === 'End' ? 2 : -1
+        if (next < 0) return
+        e.preventDefault()
+        setInspectorView(inspectorTabs[next][0])
+        e.currentTarget.querySelectorAll<HTMLButtonElement>('[role="tab"]')[next]?.focus()
+      }}>
+        {inspectorTabs.map(([value, label]) => <button type="button" role="tab" key={value} id={`inspector-tab-${value}`} aria-selected={inspectorView === value} aria-controls={`inspector-panel-${value}`} tabIndex={inspectorView === value ? 0 : -1} onClick={() => setInspectorView(value)}>{label}{value === 'coverage' && <span>{detail.evidence.length}</span>}</button>)}
+      </div>
+      <div role="tabpanel" id="inspector-panel-overview" aria-labelledby="inspector-tab-overview" hidden={inspectorView !== 'overview'} tabIndex={0}>
       <section className="inspector-summary">
         <h3>发生了什么</h3>
         <p>{event.what_happened}</p>
@@ -1083,8 +1187,50 @@ function EventInspector({
         <p>{event.why_now}</p>
         <h3>影响与边界</h3>
         <p>{event.why_it_matters}</p>
+        {event.history_note && (
+          <>
+            <h3>此前进展</h3>
+            <p>{event.history_note}</p>
+            {event.history_refs.length > 0 && (
+              <ul className="inspector-refs">
+                {event.history_refs.map((ref) => (
+                  <li key={ref.event_id}><a href={`?event=${ref.event_id}`}>{ref.title}</a><small>{ref.digest_date}</small></li>
+                ))}
+              </ul>
+            )}
+          </>
+        )}
+        {event.takeaway && (
+          <>
+            <h3>方法与启示</h3>
+            <p>{event.takeaway}</p>
+          </>
+        )}
+        {event.community_note && (
+          <>
+            <h3>社区观点</h3>
+            <p>{event.community_note}</p>
+          </>
+        )}
+        {(event.editorial_score != null || event.editorial_tags.length > 0) && (
+          <p className="inspector-editorial">
+            {event.editorial_score != null && <span>评审 {event.editorial_score.toFixed(1)} / 10</span>}
+            {event.editorial_tags.map((tag) => <span key={tag}>{tag}</span>)}
+          </p>
+        )}
       </section>
-
+      <button type="button" className="coverage-entry" onClick={() => {
+        setInspectorView('coverage')
+        document.getElementById('inspector-tab-coverage')?.focus()
+      }}>
+        <BookOpen size={18} aria-hidden="true" /><span><strong>报道对照</strong><small>{event.independent_source_count === 1 ? '单一来源，仍需交叉核对' : `${coverageLabel(event.independent_source_count)} · ${detail.evidence.length} 条可读材料`}</small></span><ArrowRight size={17} aria-hidden="true" />
+      </button>
+      <OsintPanel key={event.event_id} eventId={event.event_id} />
+      </div>
+      <div role="tabpanel" id="inspector-panel-coverage" aria-labelledby="inspector-tab-coverage" hidden={inspectorView !== 'coverage'} tabIndex={0}>
+        <EvidenceComparison detail={detail} onOpenArticle={onOpenArticle} />
+      </div>
+      <div role="tabpanel" id="inspector-panel-timeline" aria-labelledby="inspector-tab-timeline" hidden={inspectorView !== 'timeline'} tabIndex={0}>
       <section className="event-timeline">
         <div className="inspector-section-title"><Clock3 size={16} /><strong>事件时间线</strong></div>
         {detail.timeline.length ? detail.timeline.map((revision) => (
@@ -1097,20 +1243,7 @@ function EventInspector({
           </div>
         )) : <p className="inspector-empty">尚无持久修订记录。</p>}
       </section>
-
-      <section className="event-evidence">
-        <div className="inspector-section-title"><BookOpen size={16} /><strong>来源与证据</strong></div>
-        {detail.evidence.length === 0 && <p className="inspector-empty">暂无可展示的原始证据。</p>}
-        {detail.evidence.map((evidence) => (
-          <button type="button" key={evidence.article_id} onClick={() => onOpenArticle(evidence.article_id)}>
-            <span>{evidence.source_title}<b>质量 {evidence.quality_score}</b></span>
-            <strong>{evidence.title}</strong>
-            <p>{evidence.excerpt}</p>
-          </button>
-        ))}
-      </section>
-
-      <OsintPanel key={event.event_id} eventId={event.event_id} />
+      </div>
 
       <section className="event-feedback">
         <strong>调整后续雷达</strong>

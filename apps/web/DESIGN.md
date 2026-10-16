@@ -2,35 +2,37 @@
 name: Infofetcher
 description: A calm, verifiable signal desk for the world's meaningful changes.
 colors:
-  graphite-canvas: "oklch(0.95 0.006 250)"
-  signal-surface: "oklch(0.995 0.002 250 / 0.86)"
-  quiet-surface: "oklch(0.95 0.005 250 / 0.84)"
+  graphite-canvas: "oklch(0.962 0.004 250)"
+  signal-surface: "oklch(0.995 0.002 250)"
+  quiet-surface: "oklch(0.952 0.004 250)"
   graphite-text: "oklch(0.34 0.008 250)"
   graphite-strong: "oklch(0.24 0.006 250)"
   graphite-muted: "oklch(0.45 0.008 250)"
-  signal-ink: "oklch(0.32 0.008 250)"
-  signal-on-ink: "oklch(0.98 0.002 250)"
-  signal-soft: "oklch(0.91 0.006 250 / 0.88)"
-  signal-border: "oklch(0.62 0.008 250 / 0.44)"
+  signal-ink: "oklch(0.52 0.16 258)"
+  signal-on-ink: "oklch(0.99 0.004 258)"
+  signal-soft: "oklch(0.945 0.03 258)"
+  signal-border: "oklch(0.74 0.09 258)"
+  confirm-green: "oklch(0.47 0.11 155)"
+  confirm-soft: "oklch(0.95 0.035 155)"
   correction-red: "oklch(0.47 0.12 26)"
   correction-soft: "oklch(0.96 0.025 26 / 0.94)"
 typography:
   display:
     fontFamily: "Avenir Next, PingFang SC, Hiragino Sans GB, Microsoft YaHei, ui-sans-serif, system-ui, sans-serif"
     fontSize: "38px"
-    fontWeight: 750
+    fontWeight: 600
     lineHeight: 1.08
     letterSpacing: "-0.03em"
   headline:
     fontFamily: "Avenir Next, PingFang SC, Hiragino Sans GB, Microsoft YaHei, ui-sans-serif, system-ui, sans-serif"
     fontSize: "28px"
-    fontWeight: 700
+    fontWeight: 600
     lineHeight: 1.15
     letterSpacing: "-0.025em"
   title:
     fontFamily: "Avenir Next, PingFang SC, Hiragino Sans GB, Microsoft YaHei, ui-sans-serif, system-ui, sans-serif"
     fontSize: "20px"
-    fontWeight: 720
+    fontWeight: 600
     lineHeight: 1.27
     letterSpacing: "-0.025em"
   body:
@@ -42,14 +44,14 @@ typography:
   label:
     fontFamily: "Avenir Next, PingFang SC, Hiragino Sans GB, Microsoft YaHei, ui-sans-serif, system-ui, sans-serif"
     fontSize: "12px"
-    fontWeight: 750
+    fontWeight: 600
     lineHeight: 1.2
     letterSpacing: "normal"
 rounded:
   page: "0"
-  row: "6px"
-  control: "10px"
-  panel: "16px (overlays only)"
+  row: "4px (rows, tags, badges)"
+  control: "6px (buttons, inputs, list containers)"
+  panel: "10px (overlays only)"
   shell: "0"
   pill: "999px"
 spacing:
@@ -83,7 +85,7 @@ components:
     backgroundColor: "{colors.signal-soft}"
     textColor: "{colors.graphite-strong}"
     typography: "{typography.label}"
-    rounded: "{rounded.pill}"
+    rounded: "{rounded.row}"
     padding: "0 8px"
     height: "24px"
 ---
@@ -110,11 +112,11 @@ components:
 
 ## Colors
 
-“石墨信号”以冷静的黑白灰承担绝大多数界面，只让状态色表达真实语义。
+“石墨信号”以冷静的灰阶承担结构，一种蓝色（Signal Ink）标示主操作与当前选中，绿/红只表达确认与纠正。
 
 ### Primary
 
-- **Signal Ink** (`signal-ink`): 主操作、活动分段和高置信确认状态；它的稀缺性构成权威感。
+- **Signal Ink** (`signal-ink`): 主操作、导航下划线、当前选中（淡蓝底 + 左侧蓝条）。确认状态改用 `confirm-green`。
 - **Signal on Ink** (`signal-on-ink`): 只用于深色主操作上的高对比文本与图标。
 - **Signal Soft** (`signal-soft`): 活动导航、命中标签和低强度选择状态。
 
@@ -148,13 +150,15 @@ components:
 
 **Character:** 单一人文无衬线体系保持技术精度与中文可读性。层级靠字号、字重和留白建立，不靠字体混搭制造戏剧性。
 
+**The Matched Weight Rule.** PingFang SC 最重为 600，Avenir Next 在 650 以上会切到 Bold/Heavy，使中文里的数字和英文明显发黑。强调字重统一用 600，不使用 650–850 的中间值。
+
 ### Hierarchy
 
-- **Display**（750，38px，1.08）：页面主命题，只允许每个主视图出现一次；移动端收敛至 32px。
-- **Headline**（700，28px，1.15）：事件详情标题和关键区域标题。
-- **Title**（720，20px，1.27）：事件卡核心结论，最多占三行前的主要阅读焦点。
+- **Display**（600，38px，1.08）：页面主命题，只允许每个主视图出现一次；移动端收敛至 32px。导航已标明当前视图时，页面标题只保留给读屏器。
+- **Headline**（600，28px，1.15）：事件详情标题和关键区域标题。
+- **Title**（600，20px，1.27）：事件卡核心结论，最多占三行前的主要阅读焦点。
 - **Body**（400，14px，1.65）：摘要、变化解释与证据文本；长文本控制在约 72ch 内。
-- **Label**（750，12px，1.2）：时间预算、状态、元数据和紧凑操作；使用短语，不使用整段大写英文。
+- **Label**（600，12px，1.2）：时间预算、状态、元数据和紧凑操作；使用短语，不使用整段大写英文。
 
 **The One Hierarchy Rule.** 同一屏幕只允许一个 Display 层级；卡片标题必须服从页面命题。
 
@@ -179,13 +183,17 @@ components:
 
 **The Honest Elevation Rule.** 只有真实覆盖其他内容或响应交互的元素可以抬升；阴影不能替代层级设计。
 
+**The Glass-on-Overlay Rule.** 背景模糊只用于内容会从下方滚过或被覆盖的表面：吸顶标题、导航、浮动状态和划词翻译。登录面板、工具栏这类不浮动的表面用实色 `Layer Focus` / `Layer Work`。
+
+**The One-Border Rule.** 从画布向内的任一视线最多穿过一层闭合边框；带边界的容器内部改用分隔线、留白或无框按钮。
+
 ## Components
 
 ### Buttons
 
 - **Shape:** 普通按钮使用 6px，核心触控高度固定为 44px；10px 只用于输入与组合控件，静止态工具栏按钮优先透明而不是显示一排圆角底板。
-- **Primary:** Signal Ink 背景、Signal on Ink 文本，水平内边距 15px，字重 750。
-- **Selected:** 顶栏筛选与工作流标签使用 2px 下划线；独立分段控件使用 Layer Focus 浅色抬升，不使用 Signal Ink，避免与主操作争夺注意力。
+- **Primary:** Signal Ink 背景、Signal on Ink 文本，水平内边距 15px，字重 600。
+- **Selected:** 导航与工作流标签使用 2px Signal Ink 下划线；主题、覆盖等筛选片使用 Signal Soft 底 + Signal Ink 文字，不加下划线。
 - **Secondary:** Layer Work 背景配合 Control Lift；低频反馈和辅助动作停留在 Layer Recessed。
 - **Hover / Focus:** 悬停只改变色调；键盘焦点使用 2px Signal Ink 外轮廓和 2px 偏移。
 - **Secondary / Quiet:** Quiet Surface 或透明背景，不得与主操作争夺对比度。
@@ -215,7 +223,9 @@ components:
 
 ### Event Card
 
-事件卡是系统的签名组件。它按“序号与状态 → 事件结论 → 新变化与重要性 → 来源、时间与关注命中”组织；选择后在邻近详情面板中展开时间线和证据，不在列表内无限扩张。
+事件卡是系统的签名组件。它按“序号与状态 → 事件结论 → 新变化与评分 → 关注命中”组织：元数据行给出修订类型、时间与可信标签；摘要最多两行；页脚一行并列变化原因（why_now）与综合/可信/来源分数。“影响与边界”只在详情面板展开，不在每张卡片重复可信度结论。选择后在邻近详情面板中展开时间线和证据，不在列表内无限扩张。
+
+卡片是 `article`，标题是 `h3` 内的按钮，按钮伪元素覆盖整张卡片作为点击区域；读屏器只朗读标题，标题仍可按标题导航。选中态用 `aria-current`。快讯行采用同样结构，只有纠正与争议保留红色边界。
 
 **The One Decision per Component Rule.** 每个控件只承担一个清晰动作；卡片本身负责选择事件，内部不堆叠一排同权按钮。
 
@@ -241,6 +251,8 @@ components:
 - **Do** 使用 Signal Surface、Quiet Surface 和 1px Inset Boundary 建立高密度但可扫描的层级。
 - **Do** 用 Canvas → Recessed Workspace → Focus Pane 的背景步进表达页面层级，让圆角只承担交互或浮层语义。
 - **Do** 在 `prefers-reduced-motion` 下取消位移、旋转和非必要过渡，同时保留状态变化。
+- **Do** 在输入框的 Enter / Escape 处理中先判断 `isComposing`，避免中文输入法选词时误提交或清空。
+- **Do** 标题用 `text-wrap: balance`，正文用 `text-wrap: pretty`，避免末行孤字。
 
 ### Don't:
 

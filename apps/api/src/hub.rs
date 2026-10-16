@@ -1,3 +1,8 @@
+use std::{
+    collections::{HashMap, HashSet},
+    sync::{Mutex, OnceLock},
+};
+
 use async_trait::async_trait;
 use chrono::{DateTime, NaiveDate, Utc};
 use rss::{ChannelBuilder, GuidBuilder, ItemBuilder};
@@ -8,9 +13,10 @@ use sha2::{Digest, Sha256};
 use tokio::{process::Command, sync::Semaphore, time};
 
 use crate::{
-    config::Config,
+    config::{Config, OpenCliFilterConfig},
     error::{AppError, AppResult},
     feeds::parse_feed_bytes,
+    llm::{SocialPostCandidate, select_social_posts_with_llm},
     net::{get_with_safe_redirects, read_response_limited, validate_http_url},
 };
 
@@ -319,7 +325,7 @@ impl HubAdapter for OpenCli {
     async fn generate(
         &self,
         config: &Config,
-        _http: &reqwest::Client,
+        http: &reqwest::Client,
         path: &str,
     ) -> AppResult<HubFeed> {
         let name = path.trim_matches('/');
@@ -353,6 +359,11 @@ impl HubAdapter for OpenCli {
             .link
             .clone()
             .unwrap_or_else(|| "https://opencli.info/".to_string());
+        let rows = opencli_rows(&value).ok_or_else(opencli_shape_error)?;
+        let rows = match &feed.filter {
+            Some(filter) => filter_social_rows(config, http, name, filter, rows).await?,
+            None => rows,
+        };
         Ok(HubFeed {
             title: feed
                 .title
@@ -363,7 +374,7 @@ impl HubAdapter for OpenCli {
                 .description
                 .clone()
                 .unwrap_or_else(|| "OpenCLI generated feed".to_string()),
-            items: opencli_items_from_json(name, &link, &value)?,
+            items: opencli_items_from_rows(name, &link, rows),
         })
     }
 }
@@ -698,18 +709,242 @@ fn stable_text_hash(value: &str) -> String {
     hex::encode(&hasher.finalize()[..16])
 }
 
+#[cfg(test)]
 fn opencli_items_from_json(name: &str, feed_link: &str, value: &Value) -> AppResult<Vec<HubItem>> {
-    let rows = opencli_rows(value).ok_or_else(|| {
-        AppError::Upstream(
-            "OpenCLI JSON 必须是数组，或包含 items/data/results/rows 数组".to_string(),
-        )
-    })?;
-    Ok(rows
-        .into_iter()
+    let rows = opencli_rows(value).ok_or_else(opencli_shape_error)?;
+    Ok(opencli_items_from_rows(name, feed_link, rows))
+}
+
+fn opencli_shape_error() -> AppError {
+    AppError::Upstream("OpenCLI JSON 必须是数组，或包含 items/data/results/rows 数组".to_string())
+}
+
+fn opencli_items_from_rows(name: &str, feed_link: &str, rows: Vec<&Value>) -> Vec<HubItem> {
+    rows.into_iter()
         .take(200)
         .enumerate()
         .map(|(index, row)| opencli_item_from_json(name, feed_link, index, row))
-        .collect())
+        .collect()
+}
+
+const SOCIAL_FILTER_BATCH_SIZE: usize = 50;
+const SOCIAL_FILTER_CACHE_LIMIT: usize = 20_000;
+static SOCIAL_FILTER_DECISIONS: OnceLock<Mutex<HashMap<String, bool>>> = OnceLock::new();
+
+async fn filter_social_rows<'a>(
+    config: &Config,
+    http: &reqwest::Client,
+    name: &str,
+    filter: &OpenCliFilterConfig,
+    rows: Vec<&'a Value>,
+) -> AppResult<Vec<&'a Value>> {
+    let fetched = rows.len();
+    let rows = rows
+        .into_iter()
+        .filter(|row| passes_social_rules(filter, row))
+        .collect::<Vec<_>>();
+    let Some(rubric) = filter.llm_rubric.as_deref() else {
+        tracing::info!(feed = name, fetched, kept = rows.len(), "社媒规则筛选完成");
+        return Ok(rows);
+    };
+    let after_rules = rows.len();
+
+    let cache = SOCIAL_FILTER_DECISIONS.get_or_init(|| Mutex::new(HashMap::new()));
+    let decision_key = |row: &Value| format!("{name}:{}", social_row_id(row));
+    let pending = {
+        let decisions = cache.lock().expect("social filter cache poisoned");
+        let mut seen = HashSet::new();
+        rows.iter()
+            .filter(|row| !decisions.contains_key(&decision_key(row)))
+            .filter(|row| seen.insert(social_row_id(row)))
+            .map(|row| SocialPostCandidate {
+                id: social_row_id(row),
+                author: social_row_author(row).unwrap_or_default(),
+                text: social_row_llm_text(row),
+            })
+            .collect::<Vec<_>>()
+    };
+    for batch in pending.chunks(SOCIAL_FILTER_BATCH_SIZE) {
+        let keep = select_social_posts_with_llm(config, http, rubric, batch).await?;
+        let mut decisions = cache.lock().expect("social filter cache poisoned");
+        if decisions.len() + batch.len() > SOCIAL_FILTER_CACHE_LIMIT {
+            decisions.clear();
+        }
+        for post in batch {
+            decisions.insert(format!("{name}:{}", post.id), keep.contains(&post.id));
+        }
+    }
+
+    let decisions = cache.lock().expect("social filter cache poisoned");
+    let kept = rows
+        .into_iter()
+        .filter(|row| decisions.get(&decision_key(row)).copied().unwrap_or(false))
+        .collect::<Vec<_>>();
+    tracing::info!(
+        feed = name,
+        fetched,
+        after_rules,
+        llm_judged = pending.len(),
+        kept = kept.len(),
+        "社媒筛选完成"
+    );
+    Ok(kept)
+}
+
+fn passes_social_rules(filter: &OpenCliFilterConfig, row: &Value) -> bool {
+    let authors = social_row_authors(row);
+    if authors
+        .iter()
+        .any(|author| filter.exclude_authors.contains(author))
+    {
+        return false;
+    }
+    if !filter.exclude_keywords.is_empty() {
+        let haystack = [
+            social_row_text(row),
+            row.get("bio").and_then(value_to_string).unwrap_or_default(),
+            row.get("quoted_tweet")
+                .and_then(|quoted| quoted.get("text"))
+                .and_then(value_to_string)
+                .unwrap_or_default(),
+        ]
+        .join("\n")
+        .to_lowercase();
+        if filter
+            .exclude_keywords
+            .iter()
+            .any(|keyword| haystack.contains(keyword.as_str()))
+        {
+            return false;
+        }
+    }
+    if !filter.languages.is_empty()
+        && let Some(language) = social_text_language(&social_row_text(row))
+        && !filter.languages.iter().any(|allowed| allowed == language)
+    {
+        return false;
+    }
+    true
+}
+
+fn social_row_id(row: &Value) -> String {
+    first_string_field(row, &["id", "url", "link"])
+        .map(|id| clip(&id, 64))
+        .unwrap_or_else(|| stable_opencli_item_hash(row))
+}
+
+fn social_row_author(row: &Value) -> Option<String> {
+    first_string_field(row, &["author", "screen_name", "username", "handle"])
+        .map(|author| author.trim().trim_start_matches('@').to_lowercase())
+}
+
+/// 帖子作者、被引用作者和 `RT @user:` 转推来源，统一小写、去掉 `@`。
+fn social_row_authors(row: &Value) -> Vec<String> {
+    let mut authors = social_row_author(row).into_iter().collect::<Vec<_>>();
+    if let Some(quoted) = row.get("quoted_tweet").and_then(social_row_author) {
+        authors.push(quoted);
+    }
+    if let Some(retweeted) = social_row_text(row)
+        .strip_prefix("RT @")
+        .and_then(|rest| rest.split(':').next())
+        .map(|handle| handle.trim().to_lowercase())
+        .filter(|handle| !handle.is_empty())
+    {
+        authors.push(retweeted);
+    }
+    authors
+}
+
+fn social_row_text(row: &Value) -> String {
+    first_string_field(row, &["text", "content", "description", "title"]).unwrap_or_default()
+}
+
+fn social_row_llm_text(row: &Value) -> String {
+    let mut text = clip(&collapse_social_whitespace(&social_row_text(row)), 600);
+    if let Some(quoted) = row.get("quoted_tweet") {
+        let quoted_author = social_row_author(quoted).unwrap_or_default();
+        let quoted_text = clip(&collapse_social_whitespace(&social_row_text(quoted)), 300);
+        if !quoted_text.is_empty() {
+            text.push_str(&format!("\n[引用 @{quoted_author}] {quoted_text}"));
+        }
+    }
+    text
+}
+
+fn collapse_social_whitespace(value: &str) -> String {
+    value.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+const ENGLISH_MARKERS: &[&str] = &[
+    "the", "a", "an", "and", "or", "but", "is", "are", "was", "were", "be", "been", "to", "of",
+    "in", "on", "for", "with", "this", "that", "it", "its", "you", "your", "we", "they", "i",
+    "my", "me", "he", "she", "not", "just", "have", "has", "had", "can", "will", "what", "how",
+    "why", "from", "at", "by", "about", "new", "now", "if", "so", "do", "does",
+];
+
+/// 粗粒度语言识别，只用于社媒语言白名单：zh / ja / ko / ru / ar / en / other。
+/// 去掉链接、@ 和 # 后没有足够文字时返回 None，交给后续规则或 LLM 判断。
+fn social_text_language(text: &str) -> Option<&'static str> {
+    let words = text
+        .split_whitespace()
+        .filter(|word| !word.starts_with("http") && !word.starts_with('@') && !word.starts_with('#'))
+        .filter(|word| *word != "RT")
+        .collect::<Vec<_>>();
+    let (mut letters, mut han, mut kana, mut hangul, mut cyrillic, mut arabic, mut accented) =
+        (0usize, 0usize, 0usize, 0usize, 0usize, 0usize, 0usize);
+    for character in words.iter().flat_map(|word| word.chars()) {
+        if !character.is_alphabetic() {
+            continue;
+        }
+        letters += 1;
+        match character as u32 {
+            0x3040..=0x30ff => kana += 1,
+            0x3400..=0x9fff | 0xf900..=0xfaff => han += 1,
+            0xac00..=0xd7af | 0x1100..=0x11ff => hangul += 1,
+            0x0400..=0x04ff => cyrillic += 1,
+            0x0600..=0x06ff => arabic += 1,
+            0x00c0..=0x024f => accented += 1,
+            _ => {}
+        }
+    }
+    if letters < 4 {
+        return None;
+    }
+    if kana * 5 >= letters {
+        return Some("ja");
+    }
+    if han * 5 >= letters {
+        return Some("zh");
+    }
+    for (count, language) in [(hangul, "ko"), (cyrillic, "ru"), (arabic, "ar")] {
+        if count * 2 >= letters {
+            return Some(language);
+        }
+    }
+    let latin_words = words
+        .iter()
+        .map(|word| {
+            word.trim_matches(|character: char| !character.is_alphanumeric())
+                .to_lowercase()
+        })
+        .filter(|word| word.chars().any(char::is_alphabetic))
+        .collect::<Vec<_>>();
+    if latin_words.is_empty() {
+        return None;
+    }
+    let english = latin_words
+        .iter()
+        .filter(|word| ENGLISH_MARKERS.contains(&word.as_str()))
+        .count();
+    let has_foreign_punctuation = text.contains('¿') || text.contains('¡');
+    if !has_foreign_punctuation
+        && accented * 20 < letters
+        && (english * 8 >= latin_words.len() || (latin_words.len() < 4 && accented == 0))
+    {
+        Some("en")
+    } else {
+        Some("other")
+    }
 }
 
 fn opencli_rows(value: &Value) -> Option<Vec<&Value>> {
@@ -925,7 +1160,7 @@ fn clip(value: &str, limit: usize) -> String {
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::HashMap, time::Duration};
+    use std::time::Duration;
 
     use super::*;
     use crate::{config::OpenCliFeedConfig, feeds::hash_url};
@@ -1046,6 +1281,50 @@ mod tests {
     }
 
     #[test]
+    fn detects_social_post_languages() {
+        let cases = [
+            ("最近在做 harness，研究了一圈 auto review https://t.co/x", Some("zh")),
+            ("Mole Mac 1.16 is a big update. Clean up junk from Claude Code", Some("en")),
+            ("Who the fuck comes up with this shit lmao https://t.co/Wb3", Some("en")),
+            ("Thank you Sam Altman and Anthropic 🙏", Some("en")),
+            ("Si estás vibecodeando, te puede servir saber esto.", Some("other")),
+            ("LO QUE ESTE TIPO SUBIÓ A GITHUB NO DEBERÍA SER GRATIS una app que convierte tu móvil", Some("other")),
+            ("Unas cosas de REA que me sorprendieron: Le puedes pasar un driver", Some("other")),
+            ("Metendo lentinho, sem estardalhaço, sem performance, apenas fazendo o", Some("other")),
+            ("Kogoś mi przypomina, sam nie wiem...", Some("other")),
+            ("Если и есть ядерная бомба в мире софта", Some("ru")),
+            ("AI 보안 및 AI 기반 사이버 보안을 위한 공개 소스", Some("ko")),
+            ("去澡堂洗澡，前台阿姨「女宾这边。」ですね", Some("zh")),
+            ("https://t.co/ZTxtqF1Ele", None),
+            ("RT @OpenAIDevs: Low latency decisions with visual inputs", Some("en")),
+        ];
+        for (text, expected) in cases {
+            assert_eq!(social_text_language(text), expected, "{text}");
+        }
+    }
+
+    #[test]
+    fn social_rules_drop_blocked_authors_keywords_and_languages() {
+        let filter = OpenCliFilterConfig {
+            exclude_authors: vec!["whyyoutouzhele".to_string()],
+            exclude_keywords: vec!["男娘".to_string(), "习近平".to_string()],
+            languages: vec!["zh".to_string(), "en".to_string()],
+            llm_rubric: None,
+        };
+        let keep = |row: Value| passes_social_rules(&filter, &row);
+
+        assert!(keep(serde_json::json!({"author": "HiTw93", "text": "Mole Mac 1.16 is a big update for Claude Code users"})));
+        assert!(!keep(serde_json::json!({"author": "WhyYouTouZhele", "text": "10月12日，网友发贴称"})));
+        assert!(!keep(serde_json::json!({"author": "leihuozhiquan", "text": "RT @whyyoutouzhele: 吃人的旧社会"})));
+        assert!(!keep(serde_json::json!({"author": "ok", "text": "看看这个", "quoted_tweet": {"author": "whyyoutouzhele", "text": "x"}})));
+        assert!(!keep(serde_json::json!({"author": "jiuxingmao", "text": "在泳池拍 #男娘"})));
+        assert!(!keep(serde_json::json!({"author": "x", "text": "今天的视频", "bio": "可爱男娘一枚"})));
+        assert!(!keep(serde_json::json!({"author": "GFWfrog", "text": "匿名投稿 #习近平接班人"})));
+        assert!(!keep(serde_json::json!({"author": "FaztTech", "text": "Si estás vibecodeando, te puede servir saber esto."})));
+        assert!(keep(serde_json::json!({"author": "CDTChinese", "text": "https://t.co/ZTxtqF1Ele"})));
+    }
+
+    #[test]
     fn normalizes_supported_social_source_paths() {
         let config = test_config("opencli", Duration::from_secs(1));
 
@@ -1133,6 +1412,7 @@ printf '%s' '[{"uri":"at://did:plc:test/app.bsky.feed.post/record-1","text":"Blu
                     "--limit".to_string(),
                     "1".to_string(),
                 ],
+                filter: None,
             },
         );
 
@@ -1181,6 +1461,7 @@ printf '%s' '[{"uri":"at://did:plc:test/app.bsky.feed.post/record-1","text":"Blu
                 link: Some("https://bsky.app".to_string()),
                 description: None,
                 args: vec!["bluesky".to_string(), "trending".to_string()],
+                filter: None,
             },
         );
         Config {
@@ -1198,6 +1479,11 @@ printf '%s' '[{"uri":"at://did:plc:test/app.bsky.feed.post/record-1","text":"Blu
             fetch_interval_minutes: 30,
             feed_max_bytes: 1024 * 1024,
             article_max_bytes: 1024 * 1024,
+            osint_searxng_url: None,
+            intel_api_token: None,
+            embedding_base_url: None,
+            embedding_model: String::new(),
+            embedding_timeout: std::time::Duration::from_secs(1),
             allow_private_fetch: false,
             llm_base_url: String::new(),
             llm_api_key: String::new(),
@@ -1238,6 +1524,7 @@ printf '%s' '[{"uri":"at://did:plc:test/app.bsky.feed.post/record-1","text":"Blu
             article_fetch_cookies: Default::default(),
             opencli_feeds,
             web_watches: Default::default(),
+            editorial: Default::default(),
         }
     }
 }

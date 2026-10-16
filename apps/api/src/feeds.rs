@@ -217,7 +217,18 @@ fn is_tracking_query_parameter(key: &str) -> bool {
     key.starts_with("utm_")
         || matches!(
             key.as_str(),
-            "fbclid" | "gclid" | "dclid" | "msclkid" | "mc_cid" | "mc_eid" | "igshid"
+            "fbclid"
+                | "gclid"
+                | "dclid"
+                | "msclkid"
+                | "mc_cid"
+                | "mc_eid"
+                | "igshid"
+                | "_ga"
+                | "li_fat_id"
+                | "ttclid"
+                | "twclid"
+                | "vero_id"
         )
 }
 
@@ -239,6 +250,14 @@ fn normalize_whitespace(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn canonical_urls_drop_tracking_parameters() {
+        assert_eq!(
+            canonicalize_url("https://example.com/a?b=2&utm_source=x&_ga=1&ttclid=t&twclid=w&li_fat_id=l&vero_id=v&a=1#frag"),
+            "https://example.com/a?a=1&b=2"
+        );
+    }
 
     #[test]
     fn parses_basic_rss_feed() {

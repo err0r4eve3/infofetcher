@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use axum::{
     Json, Router,
@@ -13,10 +13,14 @@ use uuid::Uuid;
 
 use crate::{
     auth,
+    config::EditorialConfig,
     error::{AppError, AppResult},
     extractor::clean_article_text,
     state::AppState,
 };
+
+mod evidence;
+use evidence::{EventEvidence, EvidenceScope};
 
 const MAX_CANDIDATES: i64 = 2_000;
 const MIN_BRIEF_SCORE: i32 = 60;
@@ -54,7 +58,7 @@ struct EventDetailQuery {
 }
 
 #[derive(Debug, Serialize)]
-struct WireResponse {
+pub(crate) struct WireResponse {
     generated_at: DateTime<Utc>,
     window_hours: i64,
     stats: WireStats,
@@ -96,34 +100,67 @@ struct QueueDigestResponse {
 }
 
 #[derive(Debug, Serialize)]
-struct BriefResponse {
-    generated_at: DateTime<Utc>,
-    window_hours: i64,
+pub(crate) struct BriefResponse {
+    pub(crate) generated_at: DateTime<Utc>,
+    pub(crate) window_hours: i64,
     mode: &'static str,
     budget_minutes: Option<i32>,
-    stats: BriefStats,
-    items: Vec<EventBriefItem>,
+    pub(crate) stats: BriefStats,
+    pub(crate) items: Vec<EventBriefItem>,
 }
 
 #[derive(Debug, Serialize)]
-struct BriefStats {
-    candidate_events: usize,
+pub(crate) struct BriefStats {
+    pub(crate) candidate_events: usize,
     eligible_events: usize,
     selected_events: usize,
     independent_sources: usize,
     watch_matches: usize,
+    /// 已有 LLM 评审的候选数。
+    assessed_events: usize,
+}
+
+/// 评审得出的“此前进展”引用。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct HistoryRef {
+    pub event_id: Uuid,
+    pub title: String,
+    pub digest_date: String,
+}
+
+/// 编辑层评审结果，来自 `event_assessments`。
+#[derive(Debug, Clone, Default)]
+struct Assessment {
+    profile: String,
+    score: f32,
+    reason: String,
+    summary: String,
+    tags: Vec<String>,
+    history_note: Option<String>,
+    history_refs: Vec<HistoryRef>,
+    community_note: Option<String>,
+    takeaway: Option<String>,
+}
+
+/// 等待 LLM 评审的候选事件。
+#[derive(Debug, Clone)]
+pub(crate) struct AssessmentCandidate {
+    pub(crate) event_id: Uuid,
+    pub(crate) materials_key: String,
+    pub(crate) priority: i32,
+    pub(crate) independent_source_count: i32,
 }
 
 #[derive(Debug, Clone, Serialize)]
 pub struct EventBriefItem {
-    event_id: Uuid,
-    report_section: String,
+    pub(crate) event_id: Uuid,
+    pub(crate) report_section: String,
     revision_type: String,
-    title: String,
-    what_happened: String,
-    why_it_matters: String,
+    pub(crate) title: String,
+    pub(crate) what_happened: String,
+    pub(crate) why_it_matters: String,
     why_now: String,
-    confidence_label: String,
+    pub(crate) confidence_label: String,
     confidence_score: i32,
     source_quality_score: i32,
     impact_score: i32,
@@ -132,15 +169,25 @@ pub struct EventBriefItem {
     relevance_score: i32,
     total_score: i32,
     source_count: i32,
-    independent_source_count: i32,
-    source_titles: Vec<String>,
+    pub(crate) independent_source_count: i32,
+    pub(crate) source_titles: Vec<String>,
     watch_ids: Vec<Uuid>,
     watch_names: Vec<String>,
-    representative_article_id: Uuid,
-    published_at: DateTime<Utc>,
+    pub(crate) representative_article_id: Uuid,
+    pub(crate) published_at: DateTime<Utc>,
     update_count: i32,
     has_grounded_summary: bool,
     feedback: Option<String>,
+    /// LLM 评审的 Profile 与分数（0–10）；未评审时为空。
+    pub(crate) editorial_profile: Option<String>,
+    pub(crate) editorial_score: Option<f32>,
+    pub(crate) editorial_tags: Vec<String>,
+    pub(crate) history_note: Option<String>,
+    pub(crate) history_refs: Vec<HistoryRef>,
+    pub(crate) community_note: Option<String>,
+    pub(crate) takeaway: Option<String>,
+    #[serde(skip_serializing)]
+    below_editorial_threshold: bool,
     #[serde(skip_serializing)]
     source_families: Vec<String>,
     #[serde(skip_serializing)]
@@ -152,10 +199,11 @@ pub struct EventBriefItem {
 }
 
 #[derive(Debug, Serialize)]
-struct EventDetail {
+pub(crate) struct EventDetail {
     event: EventBriefItem,
     timeline: Vec<EventRevision>,
     evidence: Vec<EventEvidence>,
+    evidence_scope: EvidenceScope,
 }
 
 #[derive(Debug, Serialize)]
@@ -166,17 +214,6 @@ struct EventRevision {
     source_count: i32,
     occurred_at: DateTime<Utc>,
     article_id: Option<Uuid>,
-}
-
-#[derive(Debug, Serialize)]
-struct EventEvidence {
-    article_id: Uuid,
-    source_title: String,
-    title: String,
-    url: String,
-    excerpt: String,
-    quality_score: i32,
-    published_at: DateTime<Utc>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -236,6 +273,7 @@ struct Candidate {
     feedback: Option<String>,
     content_hash: String,
     url_hash: String,
+    assessment: Option<Assessment>,
 }
 
 #[derive(Debug)]
@@ -259,19 +297,35 @@ async fn now_brief(
         query.hours.unwrap_or(24).clamp(1, 24 * 30)
     };
     let limit = budget_minutes.map_or_else(|| report_limit(hours), budget_limit);
-    let watches = enabled_watches(&state).await?;
-    let preferences = load_preference_signals(&state).await?;
-    let candidates = load_candidates(&state, hours, None).await?;
+    Ok(Json(build_brief(&state, hours, limit, budget_minutes).await?))
+}
+
+/// 生成简报：评分、证据门槛、多样性重排和栏目配额。日报与 MCP 共用。
+pub(crate) async fn build_brief(
+    state: &AppState,
+    hours: i64,
+    limit: usize,
+    budget_minutes: Option<i32>,
+) -> AppResult<BriefResponse> {
+    let report_mode = budget_minutes.is_none();
+    let editorial = &state.config.editorial;
+    let watches = enabled_watches(state).await?;
+    let preferences = load_preference_signals(state).await?;
+    let candidates = load_candidates(state, hours, None).await?;
     let candidate_count = candidates.len();
+    let assessed_events = candidates
+        .iter()
+        .filter(|candidate| candidate.assessment.is_some())
+        .count();
     let ranked = candidates
         .into_iter()
-        .map(|candidate| score_candidate(candidate, &watches, &preferences))
+        .map(|candidate| score_candidate(candidate, &watches, &preferences, editorial))
         .collect::<Vec<_>>();
     let eligible_events = ranked
         .iter()
         .filter(|item| passes_evidence_gate(item))
         .count();
-    let items = select_diverse(ranked, limit);
+    let items = select_diverse(ranked, limit, &editorial.section_shares);
     let independent_sources = items
         .iter()
         .flat_map(|item| item.source_titles.iter().cloned())
@@ -282,7 +336,7 @@ async fn now_brief(
         .filter(|item| !item.watch_ids.is_empty())
         .count();
 
-    Ok(Json(BriefResponse {
+    Ok(BriefResponse {
         generated_at: Utc::now(),
         window_hours: hours,
         mode: if report_mode { "report" } else { "brief" },
@@ -293,9 +347,68 @@ async fn now_brief(
             selected_events: items.len(),
             independent_sources,
             watch_matches,
+            assessed_events,
         },
         items,
-    }))
+    })
+}
+
+/// 列出值得 LLM 评审的候选：按不含评审的规则分数做宽松预筛，优先多源与命中关注的事件。
+pub(crate) async fn assessment_candidates(
+    state: &AppState,
+    hours: i64,
+) -> AppResult<Vec<AssessmentCandidate>> {
+    let watches = enabled_watches(state).await?;
+    let preferences = load_preference_signals(state).await?;
+    let editorial = &state.config.editorial;
+    let mut queue = load_candidates(state, hours, None)
+        .await?
+        .into_iter()
+        .filter_map(|mut candidate| {
+            candidate.assessment = None;
+            // 来源数跨档或出现纠正/矛盾时才重新评审；代表文章变化不触发，避免反复计费。
+            let materials_key = format!(
+                "sources:{}:{}",
+                source_count_bucket(candidate.independent_source_count),
+                if matches!(candidate.revision_type.as_str(), "CORRECT" | "CONTRADICT") {
+                    "changed"
+                } else {
+                    "stable"
+                }
+            );
+            let item = score_candidate(candidate, &watches, &preferences, editorial);
+            passes_assessment_pregate(&item).then(|| AssessmentCandidate {
+                event_id: item.event_id,
+                materials_key,
+                priority: item.total_score
+                    + if item.watch_ids.is_empty() { 0 } else { 15 }
+                    + (item.independent_source_count.min(4) - 1).max(0) * 5,
+                independent_source_count: item.independent_source_count,
+            })
+        })
+        .collect::<Vec<_>>();
+    queue.sort_by(|left, right| right.priority.cmp(&left.priority));
+    Ok(queue)
+}
+
+/// 预筛比简报证据门槛宽：评审本身负责把关键词分漏掉的重要事件提上来。
+fn passes_assessment_pregate(item: &EventBriefItem) -> bool {
+    if matches!(item.feedback.as_deref(), Some("irrelevant" | "bad_cluster")) {
+        return false;
+    }
+    !item.watch_ids.is_empty()
+        || item.independent_source_count >= 2
+        || item.source_quality_score >= 70
+        || (!item.community_only && item.total_score >= 50)
+}
+
+fn source_count_bucket(count: i32) -> &'static str {
+    match count {
+        ..=1 => "1",
+        2 => "2",
+        3..=4 => "3-4",
+        _ => "5+",
+    }
 }
 
 async fn wire_now(
@@ -306,6 +419,11 @@ async fn wire_now(
     auth::require_session(&state.pool, &headers).await?;
     let hours = query.hours.unwrap_or(24).clamp(1, 24 * 30);
     let limit = query.limit.unwrap_or(30).clamp(1, 100);
+    Ok(Json(load_wire(&state, hours, limit).await?))
+}
+
+/// 已发布的事件快讯。MCP 共用。
+pub(crate) async fn load_wire(state: &AppState, hours: i64, limit: i64) -> AppResult<WireResponse> {
     let rows = sqlx::query(
         "SELECT story_id, topic, message, verification_status, verification_label,
                 verification_score, verification_reason, revision_type,
@@ -360,7 +478,7 @@ async fn wire_now(
     )
     .fetch_one(&state.pool)
     .await?;
-    Ok(Json(WireResponse {
+    Ok(WireResponse {
         generated_at: Utc::now(),
         window_hours: hours,
         stats: WireStats {
@@ -371,7 +489,7 @@ async fn wire_now(
             skipped: status.get("skipped"),
         },
         items,
-    }))
+    })
 }
 
 async fn queue_event_digest(
@@ -394,16 +512,27 @@ async fn event_detail(
     Query(query): Query<EventDetailQuery>,
 ) -> AppResult<Json<EventDetail>> {
     auth::require_session(&state.pool, &headers).await?;
-    let watches = enabled_watches(&state).await?;
-    let preferences = load_preference_signals(&state).await?;
-    let candidate = match load_candidates(&state, 24 * 365, Some(id))
+    Ok(Json(
+        load_event_detail(&state, id, query.representative_article_id).await?,
+    ))
+}
+
+/// 事件详情：评分、时间线和证据。事件被合并时按代表文章找到当前事件。MCP 共用。
+pub(crate) async fn load_event_detail(
+    state: &AppState,
+    id: Uuid,
+    representative_article_id: Option<Uuid>,
+) -> AppResult<EventDetail> {
+    let watches = enabled_watches(state).await?;
+    let preferences = load_preference_signals(state).await?;
+    let candidate = match load_candidates(state, 24 * 365, Some(id))
         .await?
         .into_iter()
         .next()
     {
         Some(candidate) => candidate,
         None => {
-            let article_id = query.representative_article_id.ok_or(AppError::NotFound)?;
+            let article_id = representative_article_id.ok_or(AppError::NotFound)?;
             let current_id = sqlx::query_scalar::<_, Uuid>(
                 "SELECT story_id FROM articles WHERE id = $1 AND story_id IS NOT NULL",
             )
@@ -414,7 +543,7 @@ async fn event_detail(
             if current_id == id {
                 return Err(AppError::NotFound);
             }
-            load_candidates(&state, 24 * 365, Some(current_id))
+            load_candidates(state, 24 * 365, Some(current_id))
                 .await?
                 .into_iter()
                 .next()
@@ -422,7 +551,7 @@ async fn event_detail(
         }
     };
     let id = candidate.event_id;
-    let event = score_candidate(candidate, &watches, &preferences);
+    let event = score_candidate(candidate, &watches, &preferences, &state.config.editorial);
     let revision_rows = sqlx::query(
         "SELECT id, revision_type, title, source_count, occurred_at, article_id
          FROM event_revisions
@@ -433,22 +562,9 @@ async fn event_detail(
     .bind(id)
     .fetch_all(&state.pool)
     .await?;
-    let evidence_rows = sqlx::query(
-        "SELECT a.id, f.title AS source_title, a.title, a.url,
-                COALESCE(NULLIF(a.extracted_content, ''), a.content) AS body,
-                a.quality_score, COALESCE(a.published_at, a.fetched_at) AS published_at
-         FROM articles a
-         JOIN feeds f ON f.id = a.feed_id
-         LEFT JOIN source_feedback sf ON sf.feed_id = f.id
-         WHERE a.story_id = $1 AND COALESCE(sf.muted, false) = false
-         ORDER BY a.quality_score DESC, COALESCE(a.published_at, a.fetched_at) DESC
-         LIMIT 30",
-    )
-    .bind(id)
-    .fetch_all(&state.pool)
-    .await?;
+    let (evidence, evidence_scope) = evidence::load(&state.pool, id).await?;
 
-    Ok(Json(EventDetail {
+    Ok(EventDetail {
         event,
         timeline: revision_rows
             .into_iter()
@@ -461,24 +577,9 @@ async fn event_detail(
                 article_id: row.get("article_id"),
             })
             .collect(),
-        evidence: evidence_rows
-            .into_iter()
-            .map(|row| {
-                let body = row.get::<String, _>("body");
-                let title = row.get::<String, _>("title");
-                let cleaned = clean_article_text(&body, &title);
-                EventEvidence {
-                    article_id: row.get("id"),
-                    source_title: row.get("source_title"),
-                    title,
-                    url: row.get("url"),
-                    excerpt: plain_excerpt(&cleaned, 220),
-                    quality_score: row.get("quality_score"),
-                    published_at: row.get("published_at"),
-                }
-            })
-            .collect(),
-    }))
+        evidence,
+        evidence_scope,
+    })
 }
 
 async fn list_watches(
@@ -606,8 +707,9 @@ async fn load_candidates(
          ),
          visible_articles AS (
            SELECT a.id, a.story_id, a.published_at, a.fetched_at, f.title AS source_title,
-                  LEAST(100, GREATEST(0, f.quality_score + COALESCE(sf.weight, 0)))
-                    AS source_quality,
+                  LEAST(100, GREATEST(0,
+                    f.quality_score + COALESCE(sf.weight, 0) + COALESCE(fqs.auto_adjust, 0)
+                  )) AS source_quality,
                   CASE
                     WHEN f.hub_adapter IS NOT NULL AND f.hub_path IS NOT NULL
                       THEN lower(f.hub_adapter || ':' || f.hub_path)
@@ -624,6 +726,7 @@ async fn load_candidates(
            JOIN articles a ON a.story_id = sc.id
            JOIN feeds f ON f.id = a.feed_id
            LEFT JOIN source_feedback sf ON sf.feed_id = f.id
+           LEFT JOIN feed_quality_stats fqs ON fqs.feed_id = f.id
            WHERE COALESCE(sf.muted, false) = false
              AND ($1::uuid IS NOT NULL OR COALESCE(a.published_at, a.fetched_at) >= now() - ($2 || ' hours')::interval)
          ),
@@ -659,7 +762,11 @@ async fn load_candidates(
                 COALESCE(rev.revision_type,
                   CASE WHEN ss.article_count > 1 THEN 'UPDATE' ELSE 'ADD' END
                 ) AS revision_type,
-                ef.kind AS feedback
+                ef.kind AS feedback,
+                ea.profile AS ea_profile, ea.score AS ea_score, ea.reason AS ea_reason,
+                ea.summary AS ea_summary, ea.tags AS ea_tags,
+                ea.history_note AS ea_history_note, ea.history_refs AS ea_history_refs,
+                ea.community_note AS ea_community_note, ea.takeaway AS ea_takeaway
          FROM story_signals ss
          JOIN (
            SELECT story_id, ROUND(AVG(quality))::integer AS average_source_quality
@@ -689,6 +796,8 @@ async fn load_candidates(
            LIMIT 1
          ) rev ON true
          LEFT JOIN event_feedback ef ON ef.story_id = ss.id
+         LEFT JOIN event_assessments ea
+           ON ea.story_id = ss.id AND ea.status = 'done' AND ea.score IS NOT NULL
          ORDER BY ss.published_at DESC, ss.independent_source_count DESC
          LIMIT $3",
     )
@@ -724,9 +833,32 @@ async fn load_candidates(
                 feedback: row.get("feedback"),
                 content_hash: row.get("content_hash"),
                 url_hash: row.get("url_hash"),
+                assessment: assessment_from_row(&row),
             }
         })
         .collect())
+}
+
+fn assessment_from_row(row: &sqlx::postgres::PgRow) -> Option<Assessment> {
+    let score = row.get::<Option<f32>, _>("ea_score")?;
+    let non_empty = |value: Option<String>| value.filter(|value| !value.trim().is_empty());
+    Some(Assessment {
+        profile: row.get::<Option<String>, _>("ea_profile").unwrap_or_default(),
+        score,
+        reason: row.get::<Option<String>, _>("ea_reason").unwrap_or_default(),
+        summary: row.get::<Option<String>, _>("ea_summary").unwrap_or_default(),
+        tags: row
+            .get::<Option<serde_json::Value>, _>("ea_tags")
+            .and_then(|value| serde_json::from_value(value).ok())
+            .unwrap_or_default(),
+        history_note: non_empty(row.get("ea_history_note")),
+        history_refs: row
+            .get::<Option<serde_json::Value>, _>("ea_history_refs")
+            .and_then(|value| serde_json::from_value(value).ok())
+            .unwrap_or_default(),
+        community_note: non_empty(row.get("ea_community_note")),
+        takeaway: non_empty(row.get("ea_takeaway")),
+    })
 }
 
 async fn load_preference_signals(state: &AppState) -> AppResult<Vec<PreferenceSignal>> {
@@ -755,6 +887,7 @@ fn score_candidate(
     candidate: Candidate,
     watches: &[Watch],
     preferences: &[PreferenceSignal],
+    editorial: &EditorialConfig,
 ) -> EventBriefItem {
     let age_hours = (Utc::now() - candidate.published_at).num_minutes().max(0) as f32 / 60.0;
     let urgency = freshness_score(age_hours, candidate.update_count, &candidate.revision_type);
@@ -763,7 +896,14 @@ fn score_candidate(
         candidate.article_count,
         candidate.update_count,
     );
-    let impact = impact_signal(&candidate.title, &candidate.excerpt);
+    let keyword_impact = impact_signal(&candidate.title, &candidate.excerpt);
+    // 有 LLM 评审时以评审分为准；关键词分只在评审缺失时兜底。
+    let impact = candidate
+        .assessment
+        .as_ref()
+        .map_or(keyword_impact, |assessment| {
+            (assessment.score * 10.0).round().clamp(0.0, 100.0) as i32
+        });
     let confidence = confidence_score(
         candidate.independent_source_count,
         candidate.average_source_quality,
@@ -792,23 +932,35 @@ fn score_candidate(
             .summary
             .as_ref()
             .is_some_and(|summary| !summary.trim().is_empty());
+    let assessment = candidate.assessment.clone().unwrap_or_default();
+    let assessed = candidate.assessment.is_some();
     let what_happened = candidate
         .summary
         .filter(|summary| !summary.trim().is_empty())
+        .or_else(|| (assessed && !assessment.summary.trim().is_empty()).then(|| assessment.summary.clone()))
         .unwrap_or_else(|| candidate.excerpt.clone());
-    let why_it_matters = importance_reason(
-        impact,
-        candidate.independent_source_count,
-        candidate.average_source_quality,
-        &watch_names,
-    );
+    let why_it_matters = if assessed && !assessment.reason.trim().is_empty() {
+        match watch_names.first() {
+            Some(watch) => format!("命中关注「{watch}」。{}", assessment.reason),
+            None => assessment.reason.clone(),
+        }
+    } else {
+        importance_reason(
+            impact,
+            candidate.independent_source_count,
+            candidate.average_source_quality,
+            &watch_names,
+        )
+    };
+    let below_editorial_threshold =
+        assessed && assessment.score < editorial.threshold(&assessment.profile);
     let why_now = change_reason(&candidate.revision_type, candidate.update_count, age_hours);
     let confidence_label = confidence_label(
         confidence,
         candidate.independent_source_count,
         candidate.summary_confidence.as_deref(),
     );
-    let community_only = sources_are_community_only(&candidate.source_titles);
+    let community_only = sources_are_community_only(&candidate.source_families);
     let report_section = report_section(&format!("{} {}", candidate.title, what_happened));
 
     EventBriefItem {
@@ -838,22 +990,40 @@ fn score_candidate(
         update_count: candidate.update_count,
         has_grounded_summary,
         feedback: candidate.feedback,
+        editorial_profile: assessed.then(|| assessment.profile.clone()),
+        editorial_score: assessed.then_some(assessment.score),
+        editorial_tags: assessment.tags,
+        history_note: assessment.history_note,
+        history_refs: assessment.history_refs,
+        community_note: assessment.community_note,
+        takeaway: assessment.takeaway,
+        below_editorial_threshold,
         community_only,
         content_hash: candidate.content_hash,
         url_hash: candidate.url_hash,
     }
 }
 
-fn select_diverse(mut items: Vec<EventBriefItem>, limit: usize) -> Vec<EventBriefItem> {
+fn select_diverse(
+    mut items: Vec<EventBriefItem>,
+    limit: usize,
+    section_shares: &HashMap<String, f32>,
+) -> Vec<EventBriefItem> {
     items.retain(passes_evidence_gate);
     let mut selected = Vec::<EventBriefItem>::with_capacity(limit);
+    let mut section_counts = HashMap::<String, usize>::new();
     while !items.is_empty() && selected.len() < limit {
         items.retain(|item| {
-            !selected.iter().any(|selected_item| {
-                selected_item.content_hash == item.content_hash
-                    || selected_item.url_hash == item.url_hash
-                    || titles_same_brief_event(&selected_item.title, &item.title)
-            })
+            let section_full = section_cap(&item.report_section, limit, section_shares)
+                .is_some_and(|cap| {
+                    section_counts.get(&item.report_section).copied().unwrap_or(0) >= cap
+                });
+            !section_full
+                && !selected.iter().any(|selected_item| {
+                    selected_item.content_hash == item.content_hash
+                        || selected_item.url_hash == item.url_hash
+                        || titles_same_brief_event(&selected_item.title, &item.title)
+                })
         });
         let Some(best_index) = items
             .iter()
@@ -868,13 +1038,25 @@ fn select_diverse(mut items: Vec<EventBriefItem>, limit: usize) -> Vec<EventBrie
         else {
             break;
         };
-        selected.push(items.swap_remove(best_index));
+        let item = items.swap_remove(best_index);
+        *section_counts.entry(item.report_section.clone()).or_default() += 1;
+        selected.push(item);
     }
     selected
 }
 
+/// 栏目硬上限：留下刚好够读的量，让热门栏目给其他栏目留位置。未配置的栏目不设上限。
+fn section_cap(section: &str, limit: usize, shares: &HashMap<String, f32>) -> Option<usize> {
+    let share = *shares.get(section)?;
+    Some(((limit as f32 * share).ceil() as usize).max(1))
+}
+
 fn passes_evidence_gate(item: &EventBriefItem) -> bool {
     if matches!(item.feedback.as_deref(), Some("irrelevant" | "bad_cluster")) {
+        return false;
+    }
+    // 评审判为低于 Profile 阈值的事件不进简报；命中关注的事件仍按原规则判断。
+    if item.below_editorial_threshold && item.watch_ids.is_empty() {
         return false;
     }
     if !item.watch_ids.is_empty()
@@ -1063,13 +1245,19 @@ fn is_cjk(character: char) -> bool {
     matches!(character as u32, 0x3400..=0x4DBF | 0x4E00..=0x9FFF | 0xF900..=0xFAFF)
 }
 
-fn sources_are_community_only(source_titles: &[String]) -> bool {
-    !source_titles.is_empty()
-        && source_titles.iter().all(|source| {
-            let normalized = source.to_lowercase();
-            ["v2ex", "nodeseek", "linux do", "linux.do"]
+fn sources_are_community_only(source_families: &[String]) -> bool {
+    !source_families.is_empty()
+        && source_families.iter().all(|source| {
+            let normalized = source.trim().to_ascii_lowercase();
+            if let Some(route) = normalized.strip_prefix("rsshub:") {
+                return matches!(
+                    route.split('/').next(),
+                    Some("v2ex" | "nodeseek" | "linuxdo")
+                );
+            }
+            ["v2ex.com", "nodeseek.com", "linux.do"]
                 .iter()
-                .any(|marker| normalized.contains(marker))
+                .any(|domain| normalized == *domain || normalized.ends_with(&format!(".{domain}")))
         })
 }
 
@@ -1622,6 +1810,14 @@ mod tests {
             update_count: 1,
             has_grounded_summary: false,
             feedback: None,
+            editorial_profile: None,
+            editorial_score: None,
+            editorial_tags: Vec::new(),
+            history_note: None,
+            history_refs: Vec::new(),
+            community_note: None,
+            takeaway: None,
+            below_editorial_threshold: false,
             community_only: false,
             content_hash: Uuid::new_v4().to_string(),
             url_hash: Uuid::new_v4().to_string(),
@@ -1732,6 +1928,85 @@ mod tests {
         );
     }
 
+    fn plain_candidate(title: &str) -> Candidate {
+        Candidate {
+            event_id: Uuid::new_v4(),
+            title: title.to_string(),
+            representative_article_id: Uuid::new_v4(),
+            source_titles: vec!["Wire".to_string(), "Paper".to_string()],
+            source_families: vec!["wire.example".to_string(), "paper.example".to_string()],
+            source_count: 2,
+            independent_source_count: 2,
+            article_count: 2,
+            update_count: 1,
+            average_source_quality: 70,
+            published_at: Utc::now(),
+            summary: None,
+            summary_confidence: None,
+            grounding_score: None,
+            excerpt: "excerpt".to_string(),
+            revision_type: "ADD".to_string(),
+            feedback: None,
+            content_hash: Uuid::new_v4().to_string(),
+            url_hash: Uuid::new_v4().to_string(),
+            assessment: None,
+        }
+    }
+
+    #[test]
+    fn assessment_replaces_keyword_impact_and_reason() {
+        let mut candidate = plain_candidate("Championship final preview");
+        let keyword_only = score_candidate(candidate.clone(), &[], &[], &EditorialConfig::default());
+        candidate.assessment = Some(Assessment {
+            profile: "world-news".to_string(),
+            score: 8.6,
+            reason: "影响两国边境数十万居民".to_string(),
+            summary: "双方签署停火协议".to_string(),
+            history_note: Some("本站 10 月 1 日记录过谈判开始".to_string()),
+            ..Assessment::default()
+        });
+        let assessed = score_candidate(candidate, &[], &[], &EditorialConfig::default());
+        assert_eq!(assessed.impact_score, 86);
+        assert!(assessed.total_score > keyword_only.total_score);
+        assert_eq!(assessed.why_it_matters, "影响两国边境数十万居民");
+        assert_eq!(assessed.what_happened, "双方签署停火协议", "editorial summary replaces a raw excerpt");
+        assert_eq!(assessed.editorial_score, Some(8.6));
+        assert!(passes_evidence_gate(&assessed));
+    }
+
+    #[test]
+    fn assessments_below_the_profile_threshold_leave_the_brief() {
+        let mut candidate = plain_candidate("Military strikes close a major shipping route");
+        candidate.assessment = Some(Assessment {
+            profile: "world-news".to_string(),
+            score: 3.0,
+            reason: "例行表态".to_string(),
+            summary: "官员重复既有立场".to_string(),
+            ..Assessment::default()
+        });
+        let item = score_candidate(candidate, &[], &[], &EditorialConfig::default());
+        assert!(item.below_editorial_threshold);
+        assert!(!passes_evidence_gate(&item));
+    }
+
+    #[test]
+    fn section_shares_cap_a_dominant_section() {
+        let items = (0..6)
+            .map(|index| {
+                test_brief_item(&format!("Military unit{index} alpha{index} bravo{index}"), 90 - index, 80, 80, 80, 2, &format!("Source {index}"))
+            })
+            .chain((0..3).map(|index| {
+                let titles = ["New AI chip rules announced", "Software vendor ships database", "Technology standard body votes"];
+                test_brief_item(titles[index], 70 - index as i32, 70, 70, 70, 2, &format!("Tech {index}"))
+            }))
+            .collect::<Vec<_>>();
+        let shares = HashMap::from([("world".to_string(), 0.4)]);
+        let selected = select_diverse(items, 6, &shares);
+        let world = selected.iter().filter(|item| item.report_section == "world").count();
+        assert_eq!(world, 3, "ceil(6 * 0.4) world items");
+        assert_eq!(selected.len(), 6);
+    }
+
     #[test]
     fn brief_items_expose_persisted_feedback_state() {
         let mut candidate = Candidate {
@@ -1754,16 +2029,17 @@ mod tests {
             feedback: Some("known".to_string()),
             content_hash: "content-known".to_string(),
             url_hash: "url-known".to_string(),
+            assessment: None,
         };
-        let item = score_candidate(candidate.clone(), &[], &[]);
+        let item = score_candidate(candidate.clone(), &[], &[], &EditorialConfig::default());
 
         assert_eq!(item.feedback.as_deref(), Some("known"));
         assert!(item.has_grounded_summary);
         candidate.grounding_score = None;
-        assert!(!score_candidate(candidate.clone(), &[], &[]).has_grounded_summary);
+        assert!(!score_candidate(candidate.clone(), &[], &[], &EditorialConfig::default()).has_grounded_summary);
         candidate.grounding_score = Some(90);
         candidate.summary = Some("  ".into());
-        assert!(!score_candidate(candidate, &[], &[]).has_grounded_summary);
+        assert!(!score_candidate(candidate, &[], &[], &EditorialConfig::default()).has_grounded_summary);
     }
 
     #[test]
@@ -1844,13 +2120,69 @@ mod tests {
     #[test]
     fn community_sources_need_stronger_evidence() {
         assert!(sources_are_community_only(&[
-            "NodeSeek".to_string(),
-            "V2EX 技术".to_string()
+            "rss.nodeseek.com".to_string(),
+            "v2ex.com".to_string()
         ]));
         assert!(!sources_are_community_only(&[
-            "BBC News".to_string(),
-            "NodeSeek".to_string()
+            "bbc.com".to_string(),
+            "nodeseek.com".to_string()
         ]));
+    }
+
+    #[test]
+    fn community_identity_uses_host_boundaries_and_explicit_routes() {
+        for identity in [
+            "LINUX.DO",
+            "www.v2ex.com",
+            "rsshub:v2ex/topics/latest",
+            "rsshub:linuxdo/latest",
+        ] {
+            assert!(sources_are_community_only(&[identity.to_string()]));
+        }
+        for identity in [
+            "notv2ex.com",
+            "v2ex.com.example.org",
+            "rsshub:v2ex-news/latest",
+            "Example NodeSeek News",
+        ] {
+            assert!(!sources_are_community_only(&[identity.to_string()]));
+        }
+        assert!(!sources_are_community_only(&[]));
+    }
+
+    #[test]
+    fn renaming_a_feed_does_not_change_community_gating() {
+        let mut candidate = Candidate {
+            event_id: Uuid::new_v4(),
+            title: "AI chip export rules tighten again".to_string(),
+            representative_article_id: Uuid::new_v4(),
+            source_titles: vec!["World Wire".to_string()],
+            source_families: vec!["wire.example".to_string()],
+            source_count: 1,
+            independent_source_count: 1,
+            article_count: 1,
+            update_count: 1,
+            average_source_quality: 60,
+            published_at: Utc::now(),
+            summary: None,
+            summary_confidence: None,
+            grounding_score: None,
+            excerpt: "New export controls affect advanced chips".to_string(),
+            revision_type: "UPDATE".to_string(),
+            feedback: None,
+            content_hash: "preference-content".to_string(),
+            url_hash: "preference-url".to_string(),
+            assessment: None,
+        };
+        candidate.source_families = vec!["rss.nodeseek.com".into()];
+        let before = score_candidate(candidate.clone(), &[], &[], &EditorialConfig::default());
+        candidate.source_titles = vec!["Renamed source".into()];
+        let after = score_candidate(candidate.clone(), &[], &[], &EditorialConfig::default());
+        assert!(before.community_only && after.community_only);
+        assert_eq!(passes_evidence_gate(&before), passes_evidence_gate(&after));
+        candidate.source_families = vec!["news.example.org".into()];
+        candidate.source_titles = vec!["NodeSeek review".into()];
+        assert!(!score_candidate(candidate, &[], &[], &EditorialConfig::default()).community_only);
     }
 
     #[test]
@@ -1875,6 +2207,7 @@ mod tests {
             feedback: None,
             content_hash: "preference-content".to_string(),
             url_hash: "preference-url".to_string(),
+            assessment: None,
         };
         let related_more = PreferenceSignal {
             event_id: Uuid::new_v4(),
@@ -1927,7 +2260,7 @@ mod tests {
             "World Wire",
         );
 
-        let selected = select_diverse(vec![same_lane, broader.clone(), first.clone()], 2);
+        let selected = select_diverse(vec![same_lane, broader.clone(), first.clone()], 2, &HashMap::new());
         assert_eq!(selected[0].event_id, first.event_id);
         assert_eq!(selected[1].event_id, broader.event_id);
     }
@@ -1947,7 +2280,7 @@ mod tests {
         duplicate.content_hash = first.content_hash.clone();
         let distinct = test_brief_item("A distinct event", 80, 70, 65, 80, 1, "Wire C");
 
-        let selected = select_diverse(vec![duplicate, distinct.clone(), first.clone()], 2);
+        let selected = select_diverse(vec![duplicate, distinct.clone(), first.clone()], 2, &HashMap::new());
         assert_eq!(selected[0].event_id, first.event_id);
         assert_eq!(selected[1].event_id, distinct.event_id);
     }

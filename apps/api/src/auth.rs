@@ -81,6 +81,26 @@ pub async fn require_session(pool: &PgPool, headers: &HeaderMap) -> AppResult<St
         .ok_or(AppError::Unauthorized)
 }
 
+/// intel 接口鉴权：携带 Bearer 时只认 `INTEL_API_TOKEN`，错误不回退到会话；
+/// 未携带时接受管理员会话，便于前端调试。
+pub async fn require_intel_access(
+    pool: &PgPool,
+    config: &Config,
+    headers: &HeaderMap,
+) -> AppResult<()> {
+    if let Some(bearer) = headers
+        .get(header::AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.strip_prefix("Bearer "))
+    {
+        return match &config.intel_api_token {
+            Some(expected) if constant_time_eq(expected, bearer.trim()) => Ok(()),
+            _ => Err(AppError::Unauthorized),
+        };
+    }
+    require_session(pool, headers).await.map(|_| ())
+}
+
 pub fn verify_token(config: &Config, token: &str) -> bool {
     !token.is_empty() && constant_time_eq(&config.auth_token, token)
 }
@@ -98,7 +118,7 @@ fn hash_token(token: &str) -> String {
     hex::encode(hasher.finalize())
 }
 
-fn constant_time_eq(left: &str, right: &str) -> bool {
+pub(crate) fn constant_time_eq(left: &str, right: &str) -> bool {
     let left = left.as_bytes();
     let right = right.as_bytes();
     let mut diff = left.len() ^ right.len();
@@ -151,6 +171,11 @@ mod tests {
             fetch_interval_minutes: 30,
             feed_max_bytes: 1024 * 1024,
             article_max_bytes: 1024 * 1024,
+            osint_searxng_url: None,
+            intel_api_token: None,
+            embedding_base_url: None,
+            embedding_model: String::new(),
+            embedding_timeout: std::time::Duration::from_secs(1),
             allow_private_fetch: true,
             llm_base_url: String::new(),
             llm_api_key: String::new(),
@@ -191,6 +216,7 @@ mod tests {
             article_fetch_cookies: Default::default(),
             opencli_feeds: Default::default(),
             web_watches: Default::default(),
+            editorial: Default::default(),
         };
         assert!(verify_token(&config, "secret"));
         assert!(!verify_token(&config, "wrong"));

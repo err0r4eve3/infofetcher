@@ -1,4 +1,4 @@
-//! Native OSINT workflow. No network clients, model calls or external tools.
+//! Bounded research with optional public retrieval and snapshot-bound citations.
 use super::*;
 use crate::extractor;
 use std::collections::{BTreeSet, HashMap};
@@ -8,6 +8,21 @@ const MAX_MATERIALS: i64 = 30;
 const MAX_TEXT: usize = 12_000;
 const MAX_LEADS: usize = 12;
 static RESEARCH_SLOTS: Semaphore = Semaphore::const_new(2);
+mod evidence;
+mod online;
+
+#[derive(Clone, Copy, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+enum ResearchMode {
+    Local,
+    #[default]
+    Online,
+}
+
+// Frozen jobs created before online research existed must remain offline.
+fn legacy_local_mode() -> ResearchMode {
+    ResearchMode::Local
+}
 
 pub(super) fn router() -> Router<AppState> {
     Router::new()
@@ -15,20 +30,22 @@ pub(super) fn router() -> Router<AppState> {
         .route("/api/v2/events/{id}/osint/research", post(research))
 }
 
-#[derive(Default, Deserialize)]
+#[derive(Default, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
-struct ResearchRequest {
-    query: Option<String>,
+pub(super) struct ResearchRequest {
+    pub(super) query: Option<String>,
+    #[serde(default)]
+    mode: ResearchMode,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
 struct Lead {
     article_id: Uuid,
     title: String,
     url: String,
 }
 
-#[derive(Clone, Serialize)]
+#[derive(Clone, Serialize, Deserialize)]
 struct Material {
     id: Uuid,
     title: String,
@@ -42,6 +59,10 @@ struct Material {
     content: String,
     content_truncated: bool,
     dependency_group: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    document: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    retrieval: Option<Value>,
 }
 
 #[derive(Serialize)]
@@ -70,6 +91,8 @@ struct Finding {
 
 #[derive(Serialize)]
 struct Fragment {
+    id: String,
+    evidence_ids: Vec<String>,
     kind: &'static str,
     excerpt: String,
     numbers: Vec<String>,
@@ -80,9 +103,14 @@ struct Fragment {
 #[derive(Serialize)]
 struct Report {
     format: &'static str,
+    run_id: Uuid,
+    case_id: Uuid,
     event_id: Uuid,
+    event_title: String,
+    captures: Vec<Value>,
     query: String,
     generated_at: DateTime<Utc>,
+    input_captured_at: DateTime<Utc>,
     status: &'static str,
     total_sources: i64,
     dependency_groups: usize,
@@ -92,14 +120,20 @@ struct Report {
     fragments: Vec<Fragment>,
     findings: Vec<Finding>,
     warnings: Vec<String>,
+    mode: ResearchMode,
+    evidence: Vec<evidence::Evidence>,
+    citation_audit: evidence::CitationAudit,
+    research: online::ResearchState,
 }
 
 async fn capabilities(State(state): State<AppState>, headers: HeaderMap) -> AppResult<Json<Value>> {
     auth::require_session(&state.pool, &headers).await?;
     Ok(Json(json!({
-        "agent": "native-osint-v2", "network_access": false, "model_required": false,
-        "tools": ["local_search", "source_audit", "text_comparison", "timeline_audit", "evidence_fragments"],
-        "limits": {"materials": MAX_MATERIALS, "local_leads": MAX_LEADS, "text_chars": MAX_TEXT}
+        "agent": "native-osint-v4", "network_access": true, "default_mode": "online", "model_required": false,
+        "search_provider": if state.config.osint_searxng_url.is_some() { "searxng" } else { "gdelt" },
+        "tools": ["local_search", "search", "open_page", "find_in_page", "gap_check", "citation_audit", "source_audit", "text_comparison", "timeline_audit", "evidence_fragments", "document_extraction"],
+        "casebook": {"persistent": true, "review_history": true, "entity_alias_search": true, "local_documents": true, "durable_jobs": true},
+        "limits": {"materials": MAX_MATERIALS, "local_leads": MAX_LEADS, "text_chars": MAX_TEXT, "entity_scan_runs": 20, "documents_per_case":20, "file_bytes":10485760, "pdf_pages":20, "page_chars":30000, "job_seconds":300, "searches":3, "page_attempts":6, "online_seconds":90}
     })))
 }
 
@@ -109,7 +143,7 @@ async fn research(
     Path(id): Path<Uuid>,
     Json(request): Json<ResearchRequest>,
 ) -> AppResult<impl IntoResponse> {
-    auth::require_session(&state.pool, &headers).await?;
+    let actor = auth::require_session(&state.pool, &headers).await?;
     let _slot = RESEARCH_SLOTS
         .try_acquire()
         .map_err(|_| AppError::RateLimited("调查任务已满，请稍后重试".into()))?;
@@ -122,60 +156,245 @@ async fn research(
     if !locked {
         return Err(AppError::RateLimited("该事件正在调查".into()));
     }
-    let report = tokio::time::timeout(Duration::from_secs(20), investigate(&state, id, request))
-        .await
-        .map_err(|_| AppError::Upstream("本地调查超时，请稍后重试".into()))??;
-    tx.rollback().await?;
+    let mut report =
+        tokio::time::timeout(Duration::from_secs(120), investigate(&state, id, request))
+            .await
+            .map_err(|_| AppError::Upstream("调查超时，请稍后重试".into()))??;
+    report.case_id = super::casebook::ensure_case(&mut tx, id, &report.event_title).await?;
+    let value = serde_json::to_value(&report).map_err(|e| AppError::Anyhow(e.into()))?;
+    // Hash the canonical serde_json Value serialization, not PostgreSQL's textual
+    // JSON representation. An export can reproduce this without the live reader.
+    let hash = text_hash(&value.to_string());
+    sqlx::query(
+        "INSERT INTO osint_runs (id, case_id, created_at, created_by, report, report_sha256)
+        VALUES ($1, $2, $3, $4, $5, $6)",
+    )
+    .bind(report.run_id)
+    .bind(report.case_id)
+    .bind(report.generated_at)
+    .bind(actor)
+    .bind(value)
+    .bind(hash)
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await?;
     Ok(([(header::CACHE_CONTROL, "no-store")], Json(report)))
 }
 
-async fn investigate(state: &AppState, id: Uuid, request: ResearchRequest) -> AppResult<Report> {
-    let title: String =
-        sqlx::query_scalar("SELECT representative_title FROM story_clusters WHERE id = $1")
-            .bind(id)
+#[derive(Serialize, Deserialize)]
+pub(super) struct Input {
+    #[serde(default = "legacy_local_mode")]
+    mode: ResearchMode,
+    id: Uuid,
+    title: String,
+    query: String,
+    materials: Vec<Material>,
+    total_sources: i64,
+    leads: Vec<Lead>,
+    search_available: bool,
+    captures: Vec<Value>,
+    prepared_at: DateTime<Utc>,
+    excluded_documents: i64,
+}
+
+pub(super) async fn prepare(
+    state: &AppState,
+    id: Uuid,
+    request: ResearchRequest,
+    case_id: Option<Uuid>,
+) -> AppResult<Input> {
+    let (title, topic): (String, bool) = if let Some(case_id) = case_id {
+        sqlx::query_as("SELECT title, origin = 'topic' FROM osint_cases WHERE id = $1")
+            .bind(case_id)
             .fetch_optional(&state.pool)
             .await?
-            .ok_or(AppError::NotFound)?;
+            .ok_or(AppError::NotFound)?
+    } else {
+        let title =
+            sqlx::query_scalar("SELECT representative_title FROM story_clusters WHERE id = $1")
+                .bind(id)
+                .fetch_optional(&state.pool)
+                .await?
+                .ok_or(AppError::NotFound)?;
+        (title, false)
+    };
     let query = normalized_query(
         request
             .query
             .as_deref()
             .unwrap_or(&title.chars().take(240).collect::<String>()),
     )?;
-    let (mut materials, total_sources) = load_materials(state, id).await?;
-    let groups = group_materials(&mut materials);
-    let mut steps = vec![ToolStep::done(
-        "local_evidence",
-        format!(
-            "读取 {} 篇有正文材料；事件共有 {total_sources} 篇未静音材料",
-            materials.len()
-        ),
-    )];
-    let leads = match local_search(state, id, &query).await {
-        Ok(leads) => {
-            steps.push(ToolStep::done(
-                "local_search",
-                format!("站内索引找到 {} 条其他事件/未归类材料线索", leads.len()),
-            ));
-            leads
-        }
-        Err(_) => {
-            steps.push(ToolStep {
-                tool: "local_search",
-                status: "unavailable",
-                message: "站内索引查询失败；不能解释为没有相关报道".into(),
-            });
-            vec![]
-        }
+    let (mut materials, mut total_sources) = if topic {
+        (vec![], 0)
+    } else {
+        load_materials(state, Some(id), &[]).await?
     };
+    let mut excluded_documents = 0;
+    if let Some(case_id) = case_id {
+        let rows = sqlx::query("SELECT id,filename,sha256,extraction_sha256,extraction,created_at FROM osint_documents WHERE case_id = $1 AND status = 'ready' ORDER BY created_at,id LIMIT 20")
+            .bind(case_id).fetch_all(&state.pool).await?;
+        total_sources += rows.len() as i64;
+        excluded_documents = sqlx::query_scalar(
+            "SELECT count(*) FROM osint_documents WHERE case_id = $1 AND status <> 'ready'",
+        )
+        .bind(case_id)
+        .fetch_one(&state.pool)
+        .await?;
+        for row in rows {
+            let extraction: Value = row.get("extraction");
+            let text = extraction["pages"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|page| {
+                    format!(
+                        "[第 {} 页]\n{}",
+                        page["page"],
+                        page["text"].as_str().unwrap_or_default()
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join("\n\n");
+            let content: String = text.chars().take(MAX_TEXT).collect();
+            let doc_id: Uuid = row.get("id");
+            materials.push(Material {
+                id: doc_id, title: row.get("filename"), url: format!("/api/v2/osint/documents/{doc_id}/original"),
+                canonical_url: format!("local-document:{doc_id}"), publisher: "local-import".into(),
+                reported_published_at: None, retrieved_at: row.get("created_at"), text_sha256: text_hash(&content),
+                full_text_sha256: text_hash(&text), content_truncated: content.len()<text.len() || extraction["pages"].as_array().unwrap().iter().any(|p|p["truncated"]==true),
+                content, dependency_group:0,
+                document:Some(json!({"id":doc_id,"sha256":row.get::<String,_>("sha256"),"extraction_sha256":row.get::<String,_>("extraction_sha256"),"pages":extraction["pages"].as_array().unwrap().iter().map(|p|json!({"page":p["page"],"method":p["method"],"sha256":p["sha256"],"truncated":p["truncated"]})).collect::<Vec<_>>() })),
+                retrieval: None,
+            });
+        }
+    }
+    let limit = if topic {
+        MAX_MATERIALS
+    } else {
+        MAX_LEADS as i64
+    };
+    let (mut leads, search_available) = match local_search(state, id, &query, limit).await {
+        Ok(leads) => (leads, true),
+        Err(_) => (vec![], false),
+    };
+    if topic {
+        // A topic case has no event cluster: local search hits become its base materials.
+        let ids: Vec<Uuid> = leads.drain(..).map(|lead| lead.article_id).collect();
+        let (found, total) = load_materials(state, None, &ids).await?;
+        total_sources += total;
+        materials.splice(0..0, found);
+    }
+    let article_ids: Vec<Uuid> = materials
+        .iter()
+        .filter(|m| m.document.is_none())
+        .map(|m| m.id)
+        .collect();
+    let captures: Vec<Value> = sqlx::query_scalar("SELECT DISTINCT ON (article_id) jsonb_build_object(
+        'id', id, 'article_id', article_id, 'captured_at', captured_at, 'sha256', sha256,
+        'byte_length', octet_length(body), 'details', details)
+        FROM osint_captures WHERE article_id = ANY($1) ORDER BY article_id, captured_at DESC, id DESC")
+        .bind(article_ids).fetch_all(&state.pool).await?;
+    Ok(Input {
+        mode: request.mode,
+        id,
+        title,
+        query,
+        materials,
+        total_sources,
+        leads,
+        search_available,
+        captures,
+        prepared_at: Utc::now(),
+        excluded_documents,
+    })
+}
+
+async fn investigate(state: &AppState, id: Uuid, request: ResearchRequest) -> AppResult<Report> {
+    let case_id: Option<Uuid> = sqlx::query_scalar("SELECT id FROM osint_cases WHERE event_id=$1")
+        .bind(id)
+        .fetch_optional(&state.pool)
+        .await?;
+    run(state, prepare(state, id, request, case_id).await?).await
+}
+
+pub(super) async fn execute(
+    state: &AppState,
+    input: Value,
+    run_id: Uuid,
+    case_id: Uuid,
+) -> AppResult<Value> {
+    let input = serde_json::from_value(input).map_err(|e| AppError::Anyhow(e.into()))?;
+    let mut report = run(state, input).await?;
+    report.run_id = run_id;
+    report.case_id = case_id;
+    serde_json::to_value(report).map_err(|e| AppError::Anyhow(e.into()))
+}
+
+async fn run(state: &AppState, mut input: Input) -> AppResult<Report> {
+    let research = if input.mode == ResearchMode::Online {
+        online::collect(&mut input, state.config.osint_searxng_url.as_deref()).await
+    } else {
+        online::ResearchState::local()
+    };
+    analyze(input, research).await
+}
+
+async fn analyze(input: Input, mut research: online::ResearchState) -> AppResult<Report> {
+    let Input {
+        mode,
+        id,
+        title,
+        query,
+        mut materials,
+        total_sources,
+        leads,
+        search_available,
+        captures,
+        prepared_at,
+        excluded_documents,
+    } = input;
+    let groups = group_materials(&mut materials);
+    let mut steps = vec![
+        ToolStep::done(
+            "local_evidence",
+            format!(
+                "冻结 {} 篇正文材料；候选材料共 {total_sources} 篇",
+                materials.len()
+            ),
+        ),
+        ToolStep {
+            tool: "local_search",
+            status: if search_available {
+                "done"
+            } else {
+                "unavailable"
+            },
+            message: if search_available {
+                format!("站内索引找到 {} 条相关线索", leads.len())
+            } else {
+                "站内索引不可用，不能解释为没有相关报道".into()
+            },
+        },
+    ];
     // CPU work is bounded and moved off the async runtime's executor threads.
-    let (materials, fragments, findings) = tokio::task::spawn_blocking(move || {
-        let fragments = extract_fragments(&materials);
+    let focus = query.clone();
+    let (materials, mut fragments, findings) = tokio::task::spawn_blocking(move || {
+        let fragments = extract_focused_fragments(&materials, &focus);
         let findings = audit_materials(&materials, &fragments);
         (materials, fragments, findings)
     })
     .await
     .map_err(|e| AppError::Anyhow(e.into()))?;
+    let evidence = evidence::bind(&materials, &mut fragments)?;
+    let citation_audit = evidence::validate(&materials, &fragments, &evidence)?;
+    research.finish(
+        &materials,
+        &fragments,
+        &findings,
+        total_sources,
+        excluded_documents,
+        search_available,
+    );
     steps.extend([
         ToolStep::done(
             "source_audit",
@@ -197,13 +416,42 @@ async fn investigate(state: &AppState, id: Uuid, request: ResearchRequest) -> Ap
             ),
         ),
     ]);
+    steps.extend([
+        ToolStep::done(
+            "find_in_page",
+            "在正文中优先定位检索词、更正和数字句段，标题及搜索摘要不作为证据",
+        ),
+        ToolStep::done(
+            "gap_check",
+            format!(
+                "保留 {} 项待核查缺口，停止原因已记录在研究状态中",
+                research.gaps.len()
+            ),
+        ),
+        ToolStep::done(
+            "citation_audit",
+            format!(
+                "校验 {} 条引用的 ID、正文哈希与精确位置；未做语义蕴含核验",
+                evidence.len()
+            ),
+        ),
+    ]);
     let mut warnings = vec![
         "规则结果用于定位待核对材料，不作语义蕴含判断，也不判定事实真伪。".into(),
         "不同依赖组不等于独立来源；相同文字或不同数字均不能单独证明一致或矛盾。".into(),
-        "调查只读取现有数据库与站内索引，不查询互联网或模型；相关线索不自动加入事件。".into(),
-        "报告只保留在本页，刷新前请导出。正文导出最多 12,000 字符/篇，数字线索最多 3 段/篇。"
+        "搜索候选和站内线索不等于正文证据；材料只纳入本次调查快照，不自动加入事件。".into(),
+        "调查已保存为独立快照。正文最多 12,000 字符/篇，最多 5 段/篇；复核意见不改写原始快照。"
             .into(),
     ];
+    if mode == ResearchMode::Online {
+        warnings.push("联网只发送界面中的检索词及固定补查词，不发送本地正文或文件；未调用模型，缺口检查为规则判断。".into());
+        if research.provider == "gdelt" {
+            warnings.push("当前使用 GDELT 近一个月新闻检索，不代表全网或历史资料覆盖；通用网页检索可配置 SearXNG。".into());
+        }
+        if research.stop_reason == "provider_unavailable" || research.stop_reason == "time_budget" {
+            warnings.push("联网检索未完整完成，已保留成功读取的材料与失败记录。".into());
+        }
+    }
     if total_sources > materials.len() as i64 {
         warnings
             .push("本次只分析质量排序前 30 篇中的非空正文；空正文和超出预算的材料未分析。".into());
@@ -211,11 +459,24 @@ async fn investigate(state: &AppState, id: Uuid, request: ResearchRequest) -> Ap
     if steps.iter().any(|s| s.status == "unavailable") {
         warnings.push("站内检索未完成，相关材料覆盖不完整。".into());
     }
+    if excluded_documents > 0 {
+        warnings.push(format!(
+            "排队时有 {excluded_documents} 个文件尚未成功提取，本版未纳入；提取完成后可再次调查。"
+        ));
+    }
+    if materials.iter().any(|m| m.document.is_some()) {
+        warnings.push("本地文件按同一未知发布者保守分组，不因上传多个文件增加独立来源数；OCR 和页码标记须对照原件核实。".into());
+    }
     Ok(Report {
-        format: "rss-osint-research-v2",
+        format: "rss-osint-research-v4",
+        run_id: Uuid::new_v4(),
+        case_id: Uuid::nil(),
         event_id: id,
+        event_title: title,
+        captures,
         query,
         generated_at: Utc::now(),
+        input_captured_at: prepared_at,
         status: if groups < 2 {
             "insufficient"
         } else {
@@ -229,10 +490,14 @@ async fn investigate(state: &AppState, id: Uuid, request: ResearchRequest) -> Ap
         fragments,
         findings,
         warnings,
+        mode,
+        evidence,
+        citation_audit,
+        research,
     })
 }
 
-fn normalized_query(raw: &str) -> AppResult<String> {
+pub(super) fn normalized_query(raw: &str) -> AppResult<String> {
     let value = raw.split_whitespace().collect::<Vec<_>>().join(" ");
     if value.is_empty() || value.chars().count() > 240 {
         return Err(AppError::BadRequest("检索词须为 1–240 字符".into()));
@@ -251,7 +516,7 @@ fn literal_search_query(query: &str) -> String {
         .join(" OR ")
 }
 
-async fn local_search(state: &AppState, id: Uuid, query: &str) -> AppResult<Vec<Lead>> {
+async fn local_search(state: &AppState, id: Uuid, query: &str, limit: i64) -> AppResult<Vec<Lead>> {
     let index = state.search.clone();
     let query = literal_search_query(query);
     if query.is_empty() {
@@ -271,7 +536,7 @@ async fn local_search(state: &AppState, id: Uuid, query: &str) -> AppResult<Vec<
     )
     .bind(&ids)
     .bind(id)
-    .bind(MAX_LEADS as i64)
+    .bind(limit)
     .fetch_all(&state.pool)
     .await?;
     Ok(rows
@@ -284,14 +549,18 @@ async fn local_search(state: &AppState, id: Uuid, query: &str) -> AppResult<Vec<
         .collect())
 }
 
-async fn load_materials(state: &AppState, id: Uuid) -> AppResult<(Vec<Material>, i64)> {
+async fn load_materials(
+    state: &AppState,
+    story: Option<Uuid>,
+    ids: &[Uuid],
+) -> AppResult<(Vec<Material>, i64)> {
     let rows = sqlx::query("SELECT a.id, a.title, a.url, a.canonical_url, a.content, a.extracted_content,
         a.published_at, a.fetched_at, f.site_url, f.feed_url, f.hub_adapter, f.hub_path, count(*) OVER () AS total
         FROM articles a JOIN feeds f ON f.id = a.feed_id
         LEFT JOIN source_feedback sf ON sf.feed_id = f.id
-        WHERE a.story_id = $1 AND NOT COALESCE(sf.muted, false)
+        WHERE (a.story_id = $1 OR a.id = ANY($3)) AND NOT COALESCE(sf.muted, false)
         ORDER BY a.quality_score DESC, a.fetched_at DESC, a.id LIMIT $2")
-        .bind(id).bind(MAX_MATERIALS).fetch_all(&state.pool).await?;
+        .bind(story).bind(MAX_MATERIALS).bind(ids).fetch_all(&state.pool).await?;
     let total = rows.first().map(|r| r.get("total")).unwrap_or(0);
     let materials = rows
         .into_iter()
@@ -325,6 +594,8 @@ async fn load_materials(state: &AppState, id: Uuid) -> AppResult<(Vec<Material>,
                 content_truncated: content.len() < text.len(),
                 content,
                 dependency_group: 0,
+                document: None,
+                retrieval: None,
             })
         })
         .collect();
@@ -421,7 +692,12 @@ fn is_correction(text: &str) -> bool {
     .any(|word| lower.contains(word))
 }
 
+#[cfg(test)]
 fn extract_fragments(materials: &[Material]) -> Vec<Fragment> {
+    extract_focused_fragments(materials, "")
+}
+
+fn extract_focused_fragments(materials: &[Material], query: &str) -> Vec<Fragment> {
     let mut fragments: Vec<Fragment> = vec![];
     let mut positions = HashMap::<String, usize>::new();
     for material in materials {
@@ -432,20 +708,28 @@ fn extract_fragments(materials: &[Material]) -> Vec<Fragment> {
         candidates.sort_by_key(|s| {
             if is_correction(s) {
                 0
-            } else if !numbers(s).is_empty() {
+            } else if online::matches_query(s, query) {
                 1
-            } else {
+            } else if !numbers(s).is_empty() {
                 2
+            } else {
+                3
             }
         });
         let mut seen = HashSet::new();
-        for excerpt in candidates.into_iter().filter(|s| seen.insert(*s)).take(3) {
+        for excerpt in candidates
+            .into_iter()
+            .filter(|s| seen.insert(*s))
+            .take(if query.is_empty() { 3 } else { 5 })
+        {
             if let Some(&i) = positions.get(excerpt) {
                 fragments[i].article_ids.push(material.id);
             } else {
                 positions.insert(excerpt.to_string(), fragments.len());
                 let numbers = numbers(excerpt);
                 fragments.push(Fragment {
+                    id: format!("F-{}", text_hash(excerpt)),
+                    evidence_ids: vec![],
                     kind: if is_correction(excerpt) {
                         "correction"
                     } else if numbers.is_empty() {
@@ -493,6 +777,14 @@ fn shingles(content: &str) -> HashSet<String> {
 }
 
 fn audit_materials(materials: &[Material], fragments: &[Fragment]) -> Vec<Finding> {
+    audit_materials_inner(materials, fragments, true)
+}
+
+fn audit_materials_inner(
+    materials: &[Material],
+    fragments: &[Fragment],
+    compare_text: bool,
+) -> Vec<Finding> {
     let mut findings = vec![];
     let groups = materials
         .iter()
@@ -533,8 +825,17 @@ fn audit_materials(materials: &[Material], fragments: &[Fragment]) -> Vec<Findin
             article_ids: future,
         });
     }
-    let shingled: Vec<_> = materials.iter().map(|m| shingles(&m.content)).collect();
+    // Pairwise reprint comparison is only needed for the final report, not
+    // every online gap check.
+    let shingled: Vec<_> = if compare_text {
+        materials.iter().map(|m| shingles(&m.content)).collect()
+    } else {
+        vec![]
+    };
     for i in 0..materials.len() {
+        if !compare_text {
+            break;
+        }
         for j in i + 1..materials.len() {
             if materials[i].dependency_group == materials[j].dependency_group {
                 continue;
@@ -598,7 +899,7 @@ fn audit_materials(materials: &[Material], fragments: &[Fragment]) -> Vec<Findin
 #[cfg(test)]
 mod tests {
     use super::*;
-    fn material(publisher: &str, content: &str) -> Material {
+    pub(super) fn material(publisher: &str, content: &str) -> Material {
         Material {
             id: Uuid::new_v4(),
             title: publisher.into(),
@@ -612,6 +913,8 @@ mod tests {
             content: content.into(),
             content_truncated: false,
             dependency_group: 0,
+            document: None,
+            retrieval: None,
         }
     }
     #[test]
@@ -762,7 +1065,10 @@ mod tests {
         let mut feeds = vec![];
         let mut documents = vec![];
         for (host, text) in [
-            ("alpha.example", "First publisher original record. "),
+            (
+                "alpha.example",
+                "Acme opened an office in Paris. First publisher original record. ",
+            ),
             ("beta.example", "Second publisher distinct observation. "),
         ] {
             let feed: Uuid = sqlx::query_scalar(
@@ -813,6 +1119,7 @@ mod tests {
             .bind(&token_hash).execute(&pool).await.unwrap();
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let base = format!("http://{}", listener.local_addr().unwrap());
+        let worker_state = state.clone();
         let server = tokio::spawn(async move {
             axum::serve(listener, crate::osint::router().with_state(state))
                 .await
@@ -823,7 +1130,7 @@ mod tests {
         let path = format!("{base}/api/v2/events/{story}/osint/research");
         assert_eq!(
             http.post(&path)
-                .json(&json!({}))
+                .json(&json!({"mode":"local"}))
                 .send()
                 .await
                 .unwrap()
@@ -851,14 +1158,14 @@ mod tests {
         let response = http
             .post(&path)
             .header(header::COOKIE, &cookie)
-            .json(&json!({}))
+            .json(&json!({"mode":"local"}))
             .send()
             .await
             .unwrap();
         assert_eq!(response.status(), 200);
         assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
         let report: Value = response.json().await.unwrap();
-        assert_eq!(report["format"], "rss-osint-research-v2");
+        assert_eq!(report["format"], "rss-osint-research-v4");
         assert_eq!(report["status"], "analyzed");
         assert_eq!(report["materials"].as_array().unwrap().len(), 2);
         assert_eq!(report["dependency_groups"], 2);
@@ -872,6 +1179,15 @@ mod tests {
                 .iter()
                 .all(|m| m["reported_published_at"].is_null())
         );
+        super::super::casebook_tests::exercise(
+            &pool,
+            &http,
+            &base,
+            &cookie,
+            &report,
+            documents[0].id,
+        )
+        .await;
         for body in [
             json!({"provider":"gdelt"}),
             json!({"provider":"searxng"}),
@@ -897,7 +1213,8 @@ mod tests {
             .json()
             .await
             .unwrap();
-        assert_eq!(tools["network_access"], false);
+        assert_eq!(tools["network_access"], true);
+        assert_eq!(tools["default_mode"], "online");
         assert_eq!(tools["model_required"], false);
         let capture_path = format!(
             "{base}/api/v2/events/{story}/evidence/{}/capture",
@@ -923,7 +1240,7 @@ mod tests {
         assert_eq!(
             http.post(&path)
                 .header(header::COOKIE, &cookie)
-                .json(&json!({}))
+                .json(&json!({"mode":"local"}))
                 .send()
                 .await
                 .unwrap()
@@ -939,7 +1256,7 @@ mod tests {
         let report: Value = http
             .post(&path)
             .header(header::COOKIE, &cookie)
-            .json(&json!({}))
+            .json(&json!({"mode":"local"}))
             .send()
             .await
             .unwrap()
@@ -958,7 +1275,7 @@ mod tests {
         let empty: Value = http
             .post(&path)
             .header(header::COOKIE, &cookie)
-            .json(&json!({}))
+            .json(&json!({"mode":"local"}))
             .send()
             .await
             .unwrap()
@@ -973,6 +1290,12 @@ mod tests {
             calls.load(Ordering::SeqCst),
             0,
             "native investigation must not call a model"
+        );
+        super::super::jobs_tests::exercise(&worker_state, &http, &base, &cookie).await;
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            0,
+            "background jobs must not call a model"
         );
         for feed in feeds {
             sqlx::query("DELETE FROM feeds WHERE id = $1")

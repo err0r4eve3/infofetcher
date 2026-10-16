@@ -35,6 +35,25 @@ Validation: 136 Rust tests, Clippy with warnings denied, web typecheck/build, al
 
 Publisher identity remains a heuristic: separate domains or Hub routes can share ownership or copy the same wire report. URL/content deduplication catches exact copies, not rewritten syndication. The two-stage evidence verifier remains required.
 
+## Source and filter update (2026-09-30)
+
+Three optional presets extend direct-source coverage. Requests used `infofetcher/0.1`; all returned HTTP 200 and parsed with the project's `feed-rs` 2.3.1. Every returned item had a title, link and publication/update timestamp:
+
+| Preset | Coverage | Parsed entries |
+| --- | --- | --- |
+| [NASA News Releases](https://www.nasa.gov/news-release/feed/) | Space and science announcements; [official directory](https://www.nasa.gov/rss-feeds/) | 10 |
+| [USGS Significant Earthquakes](https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/significant_month.atom) | Significant earthquakes over the past month; [official directory](https://earthquake.usgs.gov/earthquakes/feed/) | 8 |
+| [CISA Cybersecurity Advisories](https://www.cisa.gov/cybersecurity-advisories/all.xml) | Official cybersecurity advisories | 30 |
+
+These checks establish retrieval and parser compatibility at the time of testing, not ongoing availability or independent verification. Presets require explicit subscription; no production subscriptions are created by this change.
+
+- Subscription settings support intersecting text search with collection-error, never-succeeded, muted or unmuted states. Unmuted does not mean healthy. Text search covers names, URLs and adapter paths. Recommended sources can be searched by name, category and URL; already-added entries are disabled, and whole-category addition is disabled during search to avoid adding hidden entries.
+- List and situation-board layouts share inclusion keywords (all terms), exclusion keywords (any term), exact subscription label and grounded-summary availability filters. Search is case-insensitive literal matching across title, brief text, source labels and Watch names, not regular expressions. The existing topic/workflow/coverage filters further constrain the list. Shared conditions survive switching layouts but are not persisted across page reloads.
+- These filters operate only on the returned finite report (or saved items), not on the full article archive and not on candidate recall. Grounded-summary availability is the existing server flag; it is not proof of real-world truth. Source labels identify subscriptions and can be shared by more than one feed.
+- Community-only classification now uses publisher-family host boundaries or explicit RSSHub routes rather than editable feed names. Renaming a known community subscription no longer changes its brief gating; unrelated domains merely containing a community name are not classified as that community. This remains a bounded policy for V2EX, NodeSeek and LINUX DO, not a universal source taxonomy.
+
+Validation: 169 Rust tests passed (5 opt-in database tests skipped), Clippy with warnings denied, 12 frontend tests, TypeScript and the production frontend build. Local browser QA uses synthetic API fixtures; it does not establish deployed behavior or live account subscription creation.
+
 ## Verified Baseline
 
 Read-only production snapshot on 2026-07-14:

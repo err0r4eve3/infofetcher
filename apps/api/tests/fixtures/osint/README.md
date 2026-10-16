@@ -1,0 +1,1 @@
+Synthetic local document fixtures, generated with a PDF text stream and Pillow-rendered text. No downloaded or personal evidence. Text: “Acme public record”, “125 samples in Paris”, “公开记录 样本数量 125 份”. The 21-page PDF exercises the page limit.

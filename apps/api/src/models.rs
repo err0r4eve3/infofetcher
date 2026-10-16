@@ -32,6 +32,21 @@ pub struct Feed {
     pub last_error: Option<String>,
     pub article_count: i64,
     pub unread_count: i64,
+    /// 固定的编辑 Profile；为空时由评审自动判断。
+    pub editorial_profile: Option<String>,
+    /// 近 30 天的信源画像；尚未计算时为空。
+    pub quality_stats: Option<FeedQualityStats>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FeedQualityStats {
+    /// 评审达标的事件数 / 文章数；文章不足 20 篇时为空。
+    pub snr: Option<f32>,
+    pub average_score: Option<f32>,
+    pub passed_events: i32,
+    pub assessed_events: i32,
+    pub auto_adjust: i32,
+    pub declining: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -260,6 +275,8 @@ pub struct UpdateFeedRequest {
     pub quality_score: Option<i32>,
     pub feedback_weight: Option<i32>,
     pub muted: Option<bool>,
+    /// `auto` 表示交给评审自动判断。
+    pub editorial_profile: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

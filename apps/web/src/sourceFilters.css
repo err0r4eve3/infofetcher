@@ -1,0 +1,33 @@
+.source-filter-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 10px;
+  padding: 12px 0;
+}
+.source-filter-controls label {
+  display: flex;
+  flex: 1 1 160px;
+  min-width: 0;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12px;
+}
+.source-filter-controls input,
+.source-filter-controls select {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  min-height: 44px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 8px 10px;
+  color: inherit;
+  background: var(--surface-bg);
+  font: inherit;
+  font-size: 14px;
+}
+.source-filter-controls button { min-height: 44px; }
+@media (max-width: 600px) {
+  .source-filter-controls label { flex-basis: calc(50% - 10px); }
+}

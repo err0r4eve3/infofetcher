@@ -26,6 +26,19 @@ export type Feed = {
   last_error: string | null
   article_count: number
   unread_count: number
+  editorial_profile: EditorialProfile | null
+  quality_stats: FeedQualityStats | null
+}
+
+export type EditorialProfile = 'world-news' | 'tech-research' | 'long-read'
+
+export type FeedQualityStats = {
+  snr: number | null
+  average_score: number | null
+  passed_events: number
+  assessed_events: number
+  auto_adjust: number
+  declining: boolean
 }
 
 export type ArticleListItem = {
@@ -255,6 +268,18 @@ export type EventBriefItem = {
   update_count: number
   has_grounded_summary: boolean
   feedback: 'more' | 'less' | 'known' | 'irrelevant' | 'bad_cluster' | null
+  editorial_profile: EditorialProfile | null
+  editorial_score: number | null
+  editorial_tags: string[]
+  history_note: string | null
+  history_refs: Array<{ event_id: string; title: string; digest_date: string }>
+  community_note: string | null
+  takeaway: string | null
+}
+
+export type BriefEditionList = {
+  feed_path: string | null
+  editions: Array<{ edition_date: string; generated_at: string; item_count: number }>
 }
 
 export type NowBrief = {
@@ -268,6 +293,7 @@ export type NowBrief = {
     selected_events: number
     independent_sources: number
     watch_matches: number
+    assessed_events?: number
   }
   items: EventBriefItem[]
 }
@@ -305,6 +331,13 @@ export type WireResponse = {
 
 export type EventDetail = {
   event: EventBriefItem
+  evidence_scope?: {
+    total_articles: number
+    returned_articles: number
+    duplicate_groups: number
+    feeds_with_failures: number
+    feeds_never_succeeded: number
+  }
   timeline: Array<{
     id: string
     revision_type: EventBriefItem['revision_type']
@@ -321,6 +354,19 @@ export type EventDetail = {
     excerpt: string
     quality_score: number
     published_at: string
+    reported_published_at?: string | null
+    fetched_at?: string
+    provenance?: {
+      link_host: string | null
+      feed_host: string | null
+      link_is_aggregator: boolean
+      duplicate_group: number | null
+    }
+    collection?: {
+      feed_id: string
+      last_success_at: string | null
+      consecutive_failures: number
+    }
   }>
 }
 
@@ -377,6 +423,26 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
     return undefined as T
   }
   return response.json() as Promise<T>
+}
+
+const PREFETCH_TTL_MS = 15_000
+const prefetches = new Map<string, { request: Promise<unknown>; startedAt: number }>()
+
+// Starts a GET before the view that needs it has loaded; failures resolve to null so the view refetches.
+export function prefetch(path: string) {
+  if (prefetches.has(path)) return
+  prefetches.set(path, { request: api(path).catch(() => null), startedAt: Date.now() })
+}
+
+export function takePrefetched<T>(path: string): Promise<T | null> | null {
+  const entry = prefetches.get(path)
+  if (!entry) return null
+  // Kept for a short window so React StrictMode's remount adopts the same response.
+  if (Date.now() - entry.startedAt > PREFETCH_TTL_MS) {
+    prefetches.delete(path)
+    return null
+  }
+  return entry.request as Promise<T | null>
 }
 
 export function formatDate(value: string | null): string {

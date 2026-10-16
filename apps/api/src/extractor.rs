@@ -756,6 +756,11 @@ mod tests {
             fetch_interval_minutes: 30,
             feed_max_bytes: 1024 * 1024,
             article_max_bytes: 1024 * 1024,
+            osint_searxng_url: None,
+            intel_api_token: None,
+            embedding_base_url: None,
+            embedding_model: String::new(),
+            embedding_timeout: std::time::Duration::from_secs(1),
             allow_private_fetch: true,
             llm_base_url: String::new(),
             llm_api_key: String::new(),
@@ -796,6 +801,7 @@ mod tests {
             article_fetch_cookies: Default::default(),
             opencli_feeds: Default::default(),
             web_watches: Default::default(),
+            editorial: Default::default(),
         }
     }
 }

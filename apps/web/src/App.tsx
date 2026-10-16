@@ -1,3 +1,5 @@
+import { filterSources, type SourceStatus } from './sourceFilters'
+import './sourceFilters.css'
 import {
   ArrowDown,
   ArrowLeft,
@@ -36,8 +38,6 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
   type PointerEvent as ReactPointerEvent,
   type RefObject,
-  lazy,
-  Suspense,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -51,6 +51,8 @@ import {
   ArticleDetail,
   ArticleListItem,
   ArticleTranslation,
+  BriefEditionList,
+  EditorialProfile,
   Feed,
   Folder,
   formatDate,
@@ -62,12 +64,17 @@ import {
   Metrics,
   Monitor,
   MonitorRequest,
+  prefetch,
   StoryCluster,
   Summary
 } from './api'
 import { formatArticleParagraphs } from './articleText'
 import { SelectionTranslator } from './SelectionTranslator'
-const WorldRadar = lazy(() => import('./WorldRadar').then((module) => ({ default: module.WorldRadar })))
+import { WorldRadar } from './WorldRadar'
+
+// The radar is the default view: request its first report alongside the session check instead of
+// after it. An unauthenticated prefetch simply fails and the radar requests again.
+if (readAppView() === 'now') prefetch('/api/v2/brief/now?hours=12')
 
 type User = { username: string }
 
@@ -126,6 +133,13 @@ type ReadyMadeFeed = {
 type FeedPreferencePatch = {
   feedback_weight?: number
   muted?: boolean
+  editorial_profile?: EditorialProfile | 'auto'
+}
+
+const EDITORIAL_PROFILE_LABELS: Record<EditorialProfile, string> = {
+  'world-news': '时事要闻',
+  'tech-research': '科技与研究',
+  'long-read': '深度长文'
 }
 
 type FeedGroup = {
@@ -233,6 +247,9 @@ function waitWithAbort(milliseconds: number, signal: AbortSignal): Promise<boole
 }
 
 const READY_MADE_FEEDS: ReadyMadeFeed[] = [
+  { title: 'NASA News Releases', url: 'https://www.nasa.gov/news-release/feed/', category: '一手发布' },
+  { title: 'USGS Significant Earthquakes', url: 'https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/significant_month.atom', category: '一手发布' },
+  { title: 'CISA Cybersecurity Advisories', url: 'https://www.cisa.gov/cybersecurity-advisories/all.xml', category: '信息安全', qualityScore: 84 },
   { title: 'UN News', url: 'https://news.un.org/feed/subscribe/en/news/all/rss.xml', category: '一手发布' },
   { title: 'Federal Reserve Monetary Policy', url: 'https://www.federalreserve.gov/feeds/press_monetary.xml', category: '一手发布' },
   { title: 'ECB Press Releases', url: 'https://www.ecb.europa.eu/rss/press.html', category: '一手发布' },
@@ -1232,7 +1249,7 @@ function ReaderApp({
       })
       await refreshShell()
       await refreshArticles(0, false)
-    }, patch.muted === true ? `已静音 ${feed.title}` : patch.muted === false ? `已恢复 ${feed.title}` : `已调整 ${feed.title} 的优先级`)
+    }, patch.muted === true ? `已静音 ${feed.title}` : patch.muted === false ? `已恢复 ${feed.title}` : patch.editorial_profile ? `已更新 ${feed.title} 的内容类型` : `已调整 ${feed.title} 的优先级`)
   }
 
   async function summarizeUnread() {
@@ -1499,25 +1516,23 @@ function ReaderApp({
 
   if (activeView === 'now') {
     return (
-      <Suspense fallback={<div className="boot" role="status">正在加载信息雷达…</div>}>
-        <WorldRadar
-          userName={user.username}
-          theme={theme}
-          onToggleTheme={onToggleTheme}
-          onOpenSettings={() => navigateToView('settings')}
-          onOpenLibrary={(nextQuery, articleId) => {
-            setQuery(nextQuery ?? '')
-            if (articleId) {
-              directArticleOpenRef.current = true
-              setSelectedArticleId(articleId)
-              setMobilePane('reader')
-            } else {
-              setMobilePane('articles')
-            }
-            navigateToView('reader', { query: nextQuery ?? '', articleId: articleId ?? null })
-          }}
-        />
-      </Suspense>
+      <WorldRadar
+        userName={user.username}
+        theme={theme}
+        onToggleTheme={onToggleTheme}
+        onOpenSettings={() => navigateToView('settings')}
+        onOpenLibrary={(nextQuery, articleId) => {
+          setQuery(nextQuery ?? '')
+          if (articleId) {
+            directArticleOpenRef.current = true
+            setSelectedArticleId(articleId)
+            setMobilePane('reader')
+          } else {
+            setMobilePane('articles')
+          }
+          navigateToView('reader', { query: nextQuery ?? '', articleId: articleId ?? null })
+        }}
+      />
     )
   }
 
@@ -2036,6 +2051,69 @@ function MonitorPanel({
   )
 }
 
+function BriefEditionsPanel() {
+  const [data, setData] = useState<BriefEditionList | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [publishing, setPublishing] = useState(false)
+
+  const load = useCallback(async () => {
+    try {
+      setData(await api<BriefEditionList>('/api/v2/brief/editions'))
+      setError(null)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '日报列表读取失败')
+    }
+  }, [])
+
+  useEffect(() => {
+    void load()
+  }, [load])
+
+  async function publishToday() {
+    setPublishing(true)
+    try {
+      await api('/api/v2/brief/editions', { method: 'POST' })
+      await load()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '生成失败，请稍后重试')
+    } finally {
+      setPublishing(false)
+    }
+  }
+
+  return (
+    <section className="settings-section settings-section-wide">
+      <div className="settings-section-header">
+        <div>
+          <h2>日报</h2>
+          <p>{data?.feed_path ? `订阅地址：${window.location.origin}${data.feed_path}?token=（BRIEF_FEED_TOKEN）` : '订阅未开启：设置 BRIEF_FEED_TOKEN 后可用 RSS 阅读器订阅'}</p>
+        </div>
+        <button type="button" className="secondary-button" onClick={() => void publishToday()} disabled={publishing}>
+          <RefreshCw size={16} /> {publishing ? '生成中…' : '生成今天'}
+        </button>
+      </div>
+      {error && <div className="settings-empty compact danger-text">{error}</div>}
+      <div className="monitor-list">
+        {data === null && !error ? (
+          <div className="settings-empty compact">读取中…</div>
+        ) : data && data.editions.length === 0 ? (
+          <div className="settings-empty compact">还没有日报，每天定时生成</div>
+        ) : data?.editions.map((edition) => (
+          <div className="monitor-row" key={edition.edition_date}>
+            <div>
+              <strong>{edition.edition_date}</strong>
+              <small>{edition.item_count} 条 · 生成于 {formatDate(edition.generated_at)}</small>
+            </div>
+            <a className="secondary-button" href={`/api/v2/brief/editions/${edition.edition_date}?format=markdown`} target="_blank" rel="noreferrer">
+              <Download size={16} /> Markdown
+            </a>
+          </div>
+        ))}
+      </div>
+    </section>
+  )
+}
+
 function SocialSourcesPanel({
   catalog,
   loading,
@@ -2329,6 +2407,15 @@ function SettingsPage({
   onLoadOpmlFile: (event: ChangeEvent<HTMLInputElement>) => void
   onLogout: () => void
 }) {
+  const [sourceQuery, setSourceQuery] = useState('')
+  const [sourceStatus, setSourceStatus] = useState<SourceStatus>('all')
+  const [presetQuery, setPresetQuery] = useState('')
+  const visibleFeeds = filterSources(feeds, sourceQuery, sourceStatus)
+  const visibleFeedIds = new Set(visibleFeeds.map((feed) => feed.id))
+  const visibleUngrouped = ungroupedFeeds.filter((feed) => visibleFeedIds.has(feed.id))
+  const visibleGroups = groupedFeeds.map((group) => ({ ...group, feeds: group.feeds.filter((feed) => visibleFeedIds.has(feed.id)) })).filter((group) => group.feeds.length > 0)
+  const presetTerms = presetQuery.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean)
+  const visiblePresets = presetGroups.map((group) => ({ ...group, feeds: group.feeds.filter((preset) => presetTerms.every((term) => `${preset.title} ${preset.category} ${presetDisplayUrl(preset)}`.toLocaleLowerCase().includes(term))) })).filter((group) => group.feeds.length > 0)
   const totalUnread = feeds.reduce((total, feed) => total + feed.unread_count, 0)
 
   return (
@@ -2470,15 +2557,23 @@ function SettingsPage({
               <p>{feeds.length} 个订阅 · {totalUnread} 未读</p>
             </div>
           </div>
+          <div className="source-filter-controls">
+            <label>搜索订阅<input type="search" value={sourceQuery} onChange={(event) => setSourceQuery(event.target.value)} placeholder="名称或网址" /></label>
+            <label>采集状态<select aria-label="采集状态" value={sourceStatus} onChange={(event) => setSourceStatus(event.target.value as SourceStatus)}>
+              <option value="all">全部订阅</option><option value="failing">采集异常</option><option value="unverified">尚未采集成功</option><option value="muted">已静音</option><option value="active">未静音</option>
+            </select></label>
+            {(sourceQuery || sourceStatus !== 'all') && <button type="button" className="secondary-button" onClick={() => { setSourceQuery(''); setSourceStatus('all') }}>清除筛选</button>}
+          </div>
+          <p role="status">显示 {visibleFeeds.length} / {feeds.length} 个订阅</p>
           <div className="settings-feed-list">
-            {feeds.length === 0 ? (
-              <div className="settings-empty">暂无订阅</div>
+            {visibleFeeds.length === 0 ? (
+              <div className="settings-empty">{feeds.length ? '没有符合筛选的订阅' : '暂无订阅'}</div>
             ) : (
               <>
-                {ungroupedFeeds.length > 0 && (
+                {visibleUngrouped.length > 0 && (
                   <div className="settings-feed-group">
                     <h3>未分类</h3>
-                    {ungroupedFeeds.map((feed) => (
+                    {visibleUngrouped.map((feed) => (
                       <SettingsFeedItem
                         key={feed.id}
                         feed={feed}
@@ -2490,7 +2585,7 @@ function SettingsPage({
                     ))}
                   </div>
                 )}
-                {groupedFeeds.map((group) => (
+                {visibleGroups.map((group) => (
                   <div className="settings-feed-group" key={group.folder.id}>
                     <h3>{group.folder.title}</h3>
                     {group.feeds.length === 0 ? (
@@ -2520,12 +2615,14 @@ function SettingsPage({
               <h2>推荐订阅</h2>
             </div>
           </div>
+          <div className="source-filter-controls"><label>搜索推荐源<input type="search" value={presetQuery} onChange={(event) => setPresetQuery(event.target.value)} placeholder="名称、分类或网址" /></label></div>
+          {visiblePresets.length === 0 && <p role="status">没有匹配的推荐源</p>}
           <div className="settings-preset-grid">
-            {presetGroups.map((group) => (
+            {visiblePresets.map((group) => (
               <div className="preset-group" key={group.category}>
                 <div className="preset-group-title">
                   <span>{group.category}</span>
-                  <button type="button" onClick={() => onAddPresetGroup(group.category)} disabled={busy}>
+                  <button type="button" onClick={() => onAddPresetGroup(group.category)} disabled={busy || presetTerms.length > 0} title={presetTerms.length ? '清除搜索后可添加整组' : undefined}>
                     <Plus size={13} />
                     全部
                   </button>
@@ -2540,7 +2637,7 @@ function SettingsPage({
                       type="button"
                       className={added ? 'preset-row added' : 'preset-row'}
                       onClick={() => onAddReadyFeed(preset)}
-                      disabled={busy || unavailable}
+                      disabled={busy || unavailable || added}
                       title={unavailable ? 'RSSHub 尚未启用' : displayUrl}
                     >
                       <span className="preset-copy">
@@ -2555,6 +2652,8 @@ function SettingsPage({
             ))}
           </div>
         </section>
+
+        <BriefEditionsPanel />
 
         <section className="settings-section settings-section-wide">
           <div className="settings-section-header">
@@ -3001,6 +3100,14 @@ function SettingsFeedItem({
           <span>{feed.unread_count} 未读</span>
           <span>来源质量 {feed.quality_score}</span>
           {feed.feedback_weight !== 0 && <span>偏好 {feed.feedback_weight > 0 ? '+' : ''}{feed.feedback_weight}</span>}
+          {feed.quality_stats?.snr != null && (
+            <span title="近 30 天评审达标的事件数 / 文章数">信噪比 {Math.round(feed.quality_stats.snr * 100)}%</span>
+          )}
+          {feed.quality_stats?.average_score != null && <span>评审均分 {feed.quality_stats.average_score.toFixed(1)}</span>}
+          {!!feed.quality_stats?.auto_adjust && (
+            <span title="按信噪比自动调整排序用的来源质量">排序微调 {feed.quality_stats.auto_adjust > 0 ? '+' : ''}{feed.quality_stats.auto_adjust}</span>
+          )}
+          {feed.quality_stats?.declining && <span className="danger-text">信噪比较上月减半</span>}
           <span>{feed.last_fetched_at ? `上次抓取 ${formatDate(feed.last_fetched_at)}` : '尚未抓取'}</span>
           {feed.consecutive_failures > 0 && <span className="danger-text">连续失败 {feed.consecutive_failures} 次</span>}
           {feed.muted && <span className="danger-text">已静音</span>}
@@ -3010,6 +3117,19 @@ function SettingsFeedItem({
         </div>
       </div>
       <div className="settings-feed-actions">
+        <select
+          className="settings-feed-profile"
+          value={feed.editorial_profile ?? 'auto'}
+          onChange={(event) => onUpdateSourcePreference(feed, { editorial_profile: event.target.value as EditorialProfile | 'auto' })}
+          disabled={busy}
+          aria-label={`${feed.title} 的内容类型`}
+          title="评审按内容类型选择评分标准"
+        >
+          <option value="auto">自动判断</option>
+          {(Object.keys(EDITORIAL_PROFILE_LABELS) as EditorialProfile[]).map((profile) => (
+            <option key={profile} value={profile}>{EDITORIAL_PROFILE_LABELS[profile]}</option>
+          ))}
+        </select>
         <button
           type="button"
           className="icon-button"

@@ -19,7 +19,7 @@
 - 按需文章翻译，使用独立的 OpenAI-compatible 配置、非思考模式和持久化译文，不覆盖原文。
 - 关键词检测规则，支持按订阅/分类选择目标、记录命中，并批量触发 AI 总结或 Telegram 推送。
 - OPML 导入/导出。
-- 自研本地 OSINT 调查 Agent：站内检索、来源分组、疑似转载识别、数字与更正线索、时间核对及 JSON 导出，无需第三方检索或模型接口，见 [实现与边界](docs/OSINT_RESEARCH.md)。
+- OSINT 调查 Agent（默认联网，可选本地）：持久档案与版本对比、本地 PDF/图片 OCR 与原件留存、可恢复后台任务、人工复核历史、人物/机构/地点标注、跨事件别名候选与有依据的关系记录，保留站内检索、转载/数字/更正线索及 JSON 导出，支持缺口补查、正文证据 ID 与引用校验；默认 GDELT 新闻检索，可用 `OSINT_SEARXNG_URL` 接入通用网页检索，无需模型接口，见 [实现与边界](docs/OSINT_RESEARCH.md)。
 
 ## 本地开发
 
@@ -52,6 +52,7 @@ docker compose up --build
 - 事件排序分别计算影响、变化新颖度、连续时效衰减、可信度和用户相关性；最终以 MMR 风格重排抑制重复标题、正文、URL、主题和 publisher 集中。
 - Watch 命中和跨事件反馈参与用户相关性，但不能绕过证据门槛；单一来源事件会明确标记“等待交叉确认”。
 - 设置页仍可提高/降低来源权重或静音来源；旧主题监控会在迁移时导入 Watch。
+- 编辑层（`EDITORIAL_ENABLED=true`）用 LLM 按内容类型（时事要闻、科技与研究、深度长文）给候选事件打 0–10 分，替代关键词影响分，并补充“此前进展”和社区观点；同时计算信源信噪比、按栏目限额，每天生成日报（Atom、Webhook、Telegram），并提供 MCP 接口。见 [`docs/EDITORIAL_LAYER.md`](docs/EDITORIAL_LAYER.md)。
 - `rebuild-intelligence` 会批量重算全部文章质量、语言和事件聚类；`recluster-recent` 默认只重算最近 36 小时、来源质量不低于 60 的文章，适合修复线上近期漏合并；`reindex` 会分批清理并重建全文索引。
 - `migrate` 只应用数据库迁移后退出，适合在生产容器切换前单独执行迁移。
 
@@ -67,7 +68,7 @@ docker compose up --build
 - provider 不支持 JSON Schema 时会降级到 JSON Object / prompt JSON，并在当前进程内按 provider/model 记住探测结果，避免每个阶段重复发送必然失败的能力探测；所有模式都执行同一严格 decoder，不再接受自由文本摘要。
 - `LLM_MAX_CONCURRENCY` 默认 2，独立限制摘要正文与两阶段模型调用的并发，避免批量摘要挤占抓取资源。
 - Feed 抓取与摘要使用独立执行池；多实例连接同一数据库时，以 PostgreSQL advisory lock 选出唯一 worker leader。每次 claim 另带数据库 `run_token` 做完成/失败 CAS，失去领导权时会取消本任期任务，避免旧实例覆盖新结果。
-- `LLM_MAX_OUTPUT_TOKENS` 默认 4096；OpenAI 兼容 provider 使用 `max_completion_tokens`，官方 DeepSeek API 使用 `max_tokens` 并显式关闭思考模式。文章摘要输出合同限制为最多 1 条核心、4 条要点和 2 组双位置分歧。事件快讯只请求 1 条补充要点和 1 组分歧，输出上限收紧到 2048，标题直译上限为 512；更低的全局配置仍优先。旧 provider 不支持输出上限时可设为 `0` 省略。对已知 reasoning model 会省略不兼容的 `temperature`。
+- `LLM_MAX_OUTPUT_TOKENS` 默认 4096；OpenAI 兼容 provider 使用 `max_completion_tokens`，官方 DeepSeek API 使用 `max_tokens` 并显式关闭思考模式。文章摘要输出合同限制为最多 1 条核心、4 条要点和 2 组双位置分歧。事件快讯只请求 1 条补充要点和 1 组分歧，输出上限为 8192，标题直译上限为 2048；更低的全局配置仍优先。默认开启思考的模型（如 CPA 上的 claude-haiku-5-5）会先消耗约 2k 隐藏推理 token，上限过低会截断输出并让整次调用失败；思考 token 无论如何都计费，提高上限只挽回原本失败的调用。旧 provider 不支持输出上限时可设为 `0` 省略。对已知 reasoning model 会省略不兼容的 `temperature`。
 - `LLM_CONTEXT_BUDGET_CHARS` 默认 64000；服务端预留约 20000 字符给 system prompt、JSON Schema、来源目录和输出，再把其余预算均分给证据正文。事件快讯的总上下文额外限制为 48000，普通文章保持完整配置。provider 支持原生 JSON Schema 时，Schema 只随 `response_format` 发送一次；兼容降级时才补入 prompt。
 - `EVENT_AGENT_UPDATE_DEBOUNCE_SECONDS` 默认 1800。同一事件首次出现时立即生成；后续普通来源更新最多每 30 分钟重算一次，`CORRECT` / `CONTRADICT` 修订不等待该窗口。
 - 成功响应会把 provider 返回的 `prompt_tokens / completion_tokens / total_tokens`、思考 token、prompt cache 命中/未命中 token 与本地输入字符数写入日志，便于持续核对优化是否生效；日志不记录正文或 API Key。
