@@ -1885,6 +1885,16 @@ function ReaderApp({
                 <a href={selectedArticle.url} target="_blank" rel="noreferrer">
                   原文
                 </a>
+                {selectedArticle.extraction_error && !selectedArticle.extraction_error.includes('Feed 未提供正文') && (
+                  <a
+                    href={`https://www.removepaywall.com/search?url=${encodeURIComponent(selectedArticle.url)}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    title="原文抓取失败，通过公开存档查找全文"
+                  >
+                    免费阅读
+                  </a>
+                )}
               </div>
             </header>
 

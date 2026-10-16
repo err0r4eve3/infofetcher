@@ -210,6 +210,9 @@ pub struct WebWatchConfig {
     pub url: String,
     pub selector: Option<String>,
     pub description: Option<String>,
+    /// 设置后按文章列表处理：页面上 href 以此开头的每个链接生成一条，而不是整页变化一条。
+    #[serde(default)]
+    pub link_prefix: Option<String>,
 }
 
 impl Config {

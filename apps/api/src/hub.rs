@@ -522,6 +522,23 @@ impl HubAdapter for WebWatch {
         .await?;
         let html = String::from_utf8_lossy(&bytes);
         let document = Html::parse_document(&html);
+        if let Some(prefix) = watch.link_prefix.as_deref() {
+            let items = web_watch_link_items(&document, &watch.url, prefix);
+            if items.is_empty() {
+                return Err(AppError::Upstream(
+                    "Web Watch 页面没有匹配的文章链接".to_string(),
+                ));
+            }
+            return Ok(HubFeed {
+                title: watch.title.clone().unwrap_or_else(|| name.to_string()),
+                link: watch.url.clone(),
+                description: watch
+                    .description
+                    .clone()
+                    .unwrap_or_else(|| format!("网页文章列表：{}", watch.url)),
+                items,
+            });
+        }
         let selector_text = watch.selector.as_deref().unwrap_or("body");
         let selector = Selector::parse(selector_text)
             .map_err(|_| AppError::BadRequest("Web Watch selector 无效".to_string()))?;
@@ -556,6 +573,77 @@ impl HubAdapter for WebWatch {
             }],
         })
     }
+}
+
+/// 文章卡片里的标题取第一个 h1–h6，日期取能按“Oct 8, 2026”解析的文本，其余文本作摘要。
+fn web_watch_link_items(document: &Html, page_url: &str, prefix: &str) -> Vec<HubItem> {
+    let (Ok(links), Ok(headings), Ok(base)) = (
+        Selector::parse("a[href]"),
+        Selector::parse("h1, h2, h3, h4, h5, h6"),
+        reqwest::Url::parse(page_url),
+    ) else {
+        return Vec::new();
+    };
+    let mut seen = HashSet::new();
+    let mut items = Vec::new();
+    for anchor in document.select(&links) {
+        let Some(href) = anchor.value().attr("href") else {
+            continue;
+        };
+        let Ok(url) = base.join(href) else {
+            continue;
+        };
+        let path = url.path();
+        if !path.starts_with(prefix) || path.trim_end_matches('/') == prefix.trim_end_matches('/')
+        {
+            continue;
+        }
+        let link = url.to_string();
+        let texts = anchor
+            .text()
+            .map(|text| text.split_whitespace().collect::<Vec<_>>().join(" "))
+            .filter(|text| !text.is_empty())
+            .collect::<Vec<_>>();
+        let title = anchor
+            .select(&headings)
+            .next()
+            .map(|heading| heading.text().collect::<Vec<_>>().join(" "))
+            .map(|text| text.split_whitespace().collect::<Vec<_>>().join(" "))
+            .filter(|text| !text.is_empty())
+            .or_else(|| texts.iter().max_by_key(|text| text.chars().count()).cloned());
+        let Some(title) = title else {
+            continue;
+        };
+        if !seen.insert(link.clone()) {
+            continue;
+        }
+        let published_at = texts.iter().find_map(|text| {
+            ["%b %d, %Y", "%B %d, %Y"].iter().find_map(|format| {
+                NaiveDate::parse_from_str(text, format)
+                    .ok()
+                    .and_then(|date| date.and_hms_opt(12, 0, 0))
+                    .map(|time| time.and_utc())
+            })
+        });
+        let description = texts
+            .iter()
+            .filter(|text| **text != title)
+            .max_by_key(|text| text.chars().count())
+            .cloned()
+            .unwrap_or_default();
+        items.push(HubItem {
+            title,
+            guid: link.clone(),
+            link,
+            description: clip(&description, 2_000),
+            published_at,
+        });
+    }
+    // 有日期的是文章卡片，没有日期的是同前缀的导航链接（如 /research/team/...）。
+    if items.iter().any(|item| item.published_at.is_some()) {
+        items.retain(|item| item.published_at.is_some());
+    }
+    items
 }
 
 async fn get_json(
@@ -1164,6 +1252,31 @@ mod tests {
 
     use super::*;
     use crate::{config::OpenCliFeedConfig, feeds::hash_url};
+
+    #[test]
+    fn web_watch_lists_article_cards() {
+        let html = Html::parse_document(
+            r#"<a href="/research">All research</a>
+            <a href="/research/project-swap"><span>Economics</span><time>Sep 24, 2026</time>
+              <h4>Project Swap: What happens when agents trade for us?</h4>
+              <p>We made a miniature market of Claudes.</p></a>
+            <a href="/research/project-swap">duplicate</a>
+            <a href="/research/team/economics">Economics</a>
+            <a href="/news/other">Other</a>"#,
+        );
+        let items = web_watch_link_items(&html, "https://www.anthropic.com/research", "/research/");
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].link, "https://www.anthropic.com/research/project-swap");
+        assert_eq!(
+            items[0].title,
+            "Project Swap: What happens when agents trade for us?"
+        );
+        assert_eq!(items[0].description, "We made a miniature market of Claudes.");
+        assert_eq!(
+            items[0].published_at.map(|time| time.date_naive().to_string()).as_deref(),
+            Some("2026-09-24")
+        );
+    }
 
     #[test]
     fn renders_valid_rss_xml() {
