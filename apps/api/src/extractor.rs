@@ -44,7 +44,10 @@ pub async fn extract_article_content(
         };
     }
 
-    let direct = fetch_and_extract(config, http, url, cookie_header).await;
+    let direct = match text_edition_url(url) {
+        Some(text_url) => fetch_and_extract(config, http, &text_url, None).await,
+        None => fetch_and_extract(config, http, url, cookie_header).await,
+    };
     if let Ok(text) = &direct
         && (content_is_sufficient(text) || !config.browser_fetch_enabled)
     {
@@ -123,6 +126,19 @@ pub fn feed_content_is_preferred(url: &str) -> bool {
         parsed.host_str(),
         Some("www.v2ex.com" | "v2ex.com" | "www.nodeseek.com" | "nodeseek.com")
     )
+}
+
+/// NPR 正文页拦截非浏览器请求；官方纯文本版 text.npr.org 公开同一篇文章，按文章 ID 改写。
+fn text_edition_url(url: &str) -> Option<String> {
+    let parsed = reqwest::Url::parse(url).ok()?;
+    if !matches!(parsed.host_str(), Some("www.npr.org" | "npr.org")) {
+        return None;
+    }
+    let id = parsed.path_segments()?.find(|segment| {
+        segment.starts_with("nx-s1-")
+            || (segment.len() >= 9 && segment.chars().all(|character| character.is_ascii_digit()))
+    })?;
+    Some(format!("https://text.npr.org/{id}"))
 }
 
 #[derive(Debug, Error)]
@@ -640,6 +656,23 @@ mod tests {
             "https://www.nodeseek.com/post-988661-1"
         ));
         assert!(!feed_content_is_preferred("https://example.com/t/1208778"));
+    }
+
+    #[test]
+    fn rewrites_npr_articles_to_text_edition() {
+        assert_eq!(
+            text_edition_url(
+                "https://www.npr.org/sections/planet-money/2026/10/16/nx-s1-6001828/what-this-bankruptcy-says"
+            )
+            .as_deref(),
+            Some("https://text.npr.org/nx-s1-6001828")
+        );
+        assert_eq!(
+            text_edition_url("https://www.npr.org/2024/05/01/1248512345/some-story").as_deref(),
+            Some("https://text.npr.org/1248512345")
+        );
+        assert_eq!(text_edition_url("https://www.npr.org/sections/news/"), None);
+        assert_eq!(text_edition_url("https://example.com/nx-s1-6001828"), None);
     }
 
     #[tokio::test]

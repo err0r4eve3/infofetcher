@@ -16,7 +16,7 @@ use super::{
 };
 use crate::{
     error::{AppError, AppResult},
-    extractor::clean_article_text,
+    extractor::{clean_article_text, content_is_sufficient},
     llm::call_structured,
     state::AppState,
     world::{self, AssessmentCandidate, HistoryRef},
@@ -276,6 +276,18 @@ fn history_candidates(
     .collect()
 }
 
+/// 代表正文不足时改用同事件另一信源的正文，并注明出处，避免模型把它当成代表报道的原文。
+fn with_sibling_body(body: String, alt_body: Option<String>, alt_source: Option<String>) -> String {
+    let Some(alt_body) = alt_body else {
+        return body;
+    };
+    if content_is_sufficient(&body) || alt_body.chars().count() <= body.chars().count() {
+        return body;
+    }
+    let source = alt_source.unwrap_or_else(|| "另一信源".to_string());
+    format!("{body}\n\n[代表报道正文不可得，以下正文来自同一事件的 {source}]\n{alt_body}")
+}
+
 async fn load_inputs(
     state: &AppState,
     due: &[(AssessmentCandidate, String)],
@@ -307,7 +319,8 @@ async fn load_inputs(
            FROM visible
            GROUP BY story_id
          )
-         SELECT s.*, rep.title, rep.body, tr.translated_title
+         SELECT s.*, rep.title, rep.body, alt.body AS alt_body, alt.feed_title AS alt_source,
+                tr.translated_title
          FROM signals s
          JOIN LATERAL (
            SELECT a.id, a.title,
@@ -322,6 +335,18 @@ async fn load_inputs(
                     COALESCE(a.published_at, a.fetched_at) DESC
            LIMIT 1
          ) rep ON true
+         -- 代表文章常是付费墙或拒绝抓取的站点（NYT、FT），只有 Feed 摘要；取同事件正文最长的一篇备用。
+         LEFT JOIN LATERAL (
+           SELECT LEFT(COALESCE(NULLIF(a.extracted_content, ''), a.content), 12000) AS body,
+                  f.title AS feed_title
+           FROM articles a
+           JOIN feeds f ON f.id = a.feed_id
+           LEFT JOIN source_feedback sf ON sf.feed_id = f.id
+           WHERE a.story_id = s.story_id AND a.id <> rep.id
+             AND COALESCE(sf.muted, false) = false
+           ORDER BY char_length(COALESCE(NULLIF(a.extracted_content, ''), a.content)) DESC
+           LIMIT 1
+         ) alt ON true
          LEFT JOIN article_translations tr
            ON tr.article_id = rep.id AND tr.target_language = 'zh-Hans' AND tr.status = 'done'",
     )
@@ -347,7 +372,12 @@ async fn load_inputs(
             [only] => profiles::get(only).map(|profile| profile.id),
             _ => None,
         };
-        let body = clean_article_text(&row.get::<String, _>("body"), &title);
+        let body = with_sibling_body(
+            clean_article_text(&row.get::<String, _>("body"), &title),
+            row.get::<Option<String>, _>("alt_body")
+                .map(|alt| clean_article_text(&alt, &title)),
+            row.get::<Option<String>, _>("alt_source"),
+        );
         let content = match fixed_profile.and_then(profiles::get) {
             Some(profile) => {
                 text::sample_content(&body, profile.content_chars, profile.head_middle_tail)
@@ -735,6 +765,26 @@ mod tests {
             community_note: "评论者质疑基准测试".to_string(),
             takeaway: "不该出现".to_string(),
         }
+    }
+
+    #[test]
+    fn short_representative_body_borrows_sibling_text() {
+        let long = "完整正文。".repeat(200);
+        let merged = with_sibling_body(
+            "Feed 摘要".to_string(),
+            Some(long.clone()),
+            Some("BBC News".to_string()),
+        );
+        assert!(merged.starts_with("Feed 摘要"));
+        assert!(merged.contains("来自同一事件的 BBC News"));
+        assert!(merged.ends_with(&long));
+        let own = "自有正文。".repeat(200);
+        assert_eq!(
+            with_sibling_body(own.clone(), Some(long.clone()), None),
+            own,
+            "sufficient body is kept"
+        );
+        assert_eq!(with_sibling_body("短".to_string(), None, None), "短");
     }
 
     #[test]
