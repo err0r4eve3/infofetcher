@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { ArrowRight, Bell, ChartNoAxesCombined, Cpu, FileText, Globe2, Layers3, LayoutGrid, Search, ShieldCheck, SlidersHorizontal, X } from 'lucide-react'
+import { ArrowRight, Bell, ChartNoAxesCombined, Cpu, FileText, Globe2, Layers3, LayoutGrid, Search, ShieldCheck, X } from 'lucide-react'
 import type { EventBriefItem, NowBrief } from './api'
 import { formatDate, watchDisplayName } from './api'
 import { isCorrection, readHiddenPanels, SITUATION_PANELS, situationPanelItems, type SituationPanel, type SituationTopic } from './situation'
@@ -74,7 +74,7 @@ export function SituationBoard({ brief, userName, filters, onFiltersChange, onOp
           }} onBlur={(event) => {
             if (!event.currentTarget.contains(event.relatedTarget)) event.currentTarget.open = false
           }}>
-            <summary><SlidersHorizontal size={16} aria-hidden="true" />面板</summary>
+            <summary><LayoutGrid size={16} aria-hidden="true" />面板</summary>
             <div className="situation-settings-menu">
               {SITUATION_PANELS.map(({ key, label }) => <label key={key}>
                 <input type="checkbox" checked={!hidden.includes(key)} onChange={(event) => setHidden((current) => event.target.checked ? current.filter((value) => value !== key) : [...current, key])} />{label}
@@ -131,7 +131,7 @@ function SignalPanel({ panel, label, items, onHide, onOpenEvent }: {
             <strong>{item.title}</strong>
             <span className="situation-excerpt">{panel === 'watches' ? `命中关注：${item.watch_names.map(watchDisplayName).join('、') || '已匹配关注规则'}` : panel === 'priority' ? item.what_happened : item.why_now}</span>
             <span className="situation-event-meta">
-              <span className={`situation-revision${isCorrection(item) ? ' correction' : ''}`}>{REVISIONS[item.revision_type]}</span>
+              <span className={`situation-revision type-${item.revision_type}${isCorrection(item) ? ' correction' : ''}`}>{REVISIONS[item.revision_type]}</span>
               {panel === 'priority' ? <span>{item.independent_source_count} 个去重订阅源 · {item.source_titles.slice(0, 3).join(' / ') || '来源待补全'}</span> : <span>{item.source_titles[0] || '来源待补全'}</span>}
             </span>
           </span>

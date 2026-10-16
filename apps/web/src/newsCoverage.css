@@ -130,16 +130,17 @@
   width: 100%;
   min-height: 76px;
   margin-top: 14px;
-  padding: 12px;
-  border-radius: var(--radius-row);
-  background: var(--layer-recessed);
+  padding: 12px 14px;
+  border-radius: var(--radius-control);
+  background: transparent;
   color: var(--text-strong);
+  box-shadow: inset 0 0 0 1px var(--line);
   text-align: left;
 }
 .coverage-entry > span { flex: 1; }
 .coverage-entry strong { display: block; font-size: 14px; }
 .coverage-entry small { display: block; margin-top: 4px; font-size: 12px; color: var(--text-muted); }
-.coverage-entry:hover { background: var(--surface-muted); }
+.coverage-entry:hover { background: var(--item-hover); box-shadow: inset 0 0 0 1px var(--line-strong); }
 
 .coverage-comparison h3 { margin: 22px 0 16px; font-size: 15px; color: var(--text-strong); }
 .coverage-statistics { display: grid; grid-template-columns: 1fr 1fr; margin: 0; }

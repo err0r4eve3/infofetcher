@@ -665,7 +665,6 @@ a.secondary-button:hover,
   outline-offset: 2px;
 }
 
-.theme-toggle[aria-pressed="true"],
 .icon-button.active {
   background: var(--accent-soft);
   color: var(--accent-strong);
@@ -2548,7 +2547,6 @@ a.secondary-button:hover,
   color: var(--text-strong);
 }
 
-:root[data-theme="dark"] .theme-toggle[aria-pressed="true"],
 :root[data-theme="dark"] .icon-button.active {
   background: var(--accent-soft);
   color: var(--accent-strong);
@@ -4115,6 +4113,27 @@ a.secondary-button:hover,
   font-weight: 600;
 }
 
+/* The top-level disclosure reads as a section row with a trailing chevron. */
+.osint-panel > details > summary {
+  min-height: 48px;
+  display: flex;
+  align-items: center;
+  list-style: none;
+}
+.osint-panel > details > summary::-webkit-details-marker { display: none; }
+.osint-panel > details > summary::after {
+  content: "";
+  width: 7px;
+  height: 7px;
+  margin-left: auto;
+  border-right: 1.5px solid var(--text-soft);
+  border-bottom: 1.5px solid var(--text-soft);
+  transform: rotate(-45deg);
+  transition: transform var(--motion-fast) var(--ease-out);
+}
+.osint-panel > details[open] > summary::after { transform: rotate(45deg); }
+.osint-panel > details > summary:hover { color: var(--accent-strong); }
+
 .osint-panel > details > summary > span {
   margin-left: 12px;
   color: var(--text-soft);
@@ -4131,7 +4150,8 @@ a.secondary-button:hover,
 .osint-stats { display: flex; flex-wrap: wrap; gap: 12px 24px; }
 .osint-stats dd { font-size: 18px; font-weight: 600; }
 .osint-links { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; margin: 12px 0; }
-.osint-panel button { padding: 6px 10px; border: 1px solid var(--line-soft); background: var(--surface-muted); color: var(--text); }
+.osint-panel button { padding: 6px 10px; border: 0; border-radius: var(--radius-control); background: transparent; color: var(--text); box-shadow: inset 0 0 0 1px var(--line); }
+.osint-panel button:hover:not(:disabled) { background: var(--item-hover); color: var(--text-strong); }
 .osint-panel button:disabled { opacity: .6; cursor: wait; }
 .osint-archive-option { display: flex; align-items: flex-start; gap: 8px; margin: 12px 0; }
 .osint-archive-option input { flex: none; margin-top: 5px; }
@@ -4162,11 +4182,12 @@ a.secondary-button:hover,
 }
 
 .event-feedback button {
-  min-height: 44px;
-  padding: 0 9px;
-  border-radius: var(--radius-row);
-  background: var(--surface-muted);
+  min-height: 40px;
+  padding: 0 11px;
+  border-radius: var(--radius-control);
+  background: transparent;
   color: var(--text-muted);
+  box-shadow: inset 0 0 0 1px var(--line);
   font-size: 12px;
 }
 
