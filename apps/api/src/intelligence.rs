@@ -904,6 +904,7 @@ pub async fn recluster_recent(
     state: &AppState,
     hours: i64,
     min_feed_quality: i32,
+    min_story_sources: i32,
 ) -> AppResult<i64> {
     let hours = hours.clamp(1, 24 * 14);
     let min_feed_quality = min_feed_quality.clamp(0, 100);
@@ -916,13 +917,16 @@ pub async fn recluster_recent(
         "SELECT a.id, a.story_id
          FROM articles a
          JOIN feeds f ON f.id = a.feed_id
+         LEFT JOIN story_clusters sc ON sc.id = a.story_id
          WHERE COALESCE(a.published_at, a.fetched_at)
                  >= now() - make_interval(hours => $1::integer)
            AND f.quality_score >= $2
+           AND COALESCE(sc.source_count, 0) >= $3
          ORDER BY COALESCE(a.published_at, a.fetched_at), a.id",
     )
     .bind(hours as i32)
     .bind(min_feed_quality)
+    .bind(min_story_sources)
     .fetch_all(&mut *transaction)
     .await?;
     let article_ids = rows
@@ -1486,6 +1490,27 @@ fn geography_markers(tokens: &BTreeSet<String>) -> HashSet<&'static str> {
             "australia" | "australian" => Some("au"),
             "venezuela" | "venezuelan" => Some("ve"),
             "nigeria" | "nigerian" => Some("ng"),
+            "pakistan" | "pakistani" | "peshawar" | "karachi" | "lahore" | "islamabad" => Some("pk"),
+            "afghanistan" | "afghan" => Some("af"),
+            "mexico" | "mexican" => Some("mx"),
+            "brazil" | "brazilian" => Some("br"),
+            "turkey" | "turkish" => Some("tr"),
+            "egypt" | "egyptian" => Some("eg"),
+            "syria" | "syrian" => Some("sy"),
+            "lebanon" | "lebanese" => Some("lb"),
+            "iraq" | "iraqi" => Some("iq"),
+            "taiwan" | "taiwanese" => Some("tw"),
+            "italy" | "italian" => Some("it"),
+            "poland" | "polish" => Some("pl"),
+            "sudan" | "sudanese" => Some("sd"),
+            "philippines" | "philippine" | "filipino" => Some("ph"),
+            "indonesia" | "indonesian" => Some("id"),
+            // 美国州名只收不与国家、人名重名的。
+            "california" | "texas" | "florida" | "oregon" | "ohio" | "michigan" | "arizona"
+            | "colorado" | "illinois" | "minnesota" | "wisconsin" | "pennsylvania"
+            | "massachusetts" | "tennessee" | "kentucky" | "louisiana" | "alabama"
+            | "mississippi" | "oklahoma" | "utah" | "nevada" | "iowa" | "kansas" | "missouri"
+            | "virginia" | "carolina" | "maryland" | "connecticut" => Some("us"),
             _ => None,
         })
         .collect()
@@ -1519,8 +1544,13 @@ fn story_match_score(
         return 0.0;
     }
     let intersection = left_tokens.intersection(right_tokens).count();
-    let real_intersection = left_tokens
+    // 分词会同时保留 killed 和 kill，重合数按词干计，避免一个词算两次。
+    let shared_stems = left_tokens
         .intersection(right_tokens)
+        .filter(|token| !is_inflection_of_shared(token, left_tokens, right_tokens))
+        .collect::<Vec<_>>();
+    let real_intersection = shared_stems
+        .iter()
         .filter(|token| !token.starts_with("__") && !is_generic_story_action_lexeme(token))
         .count();
     let min_tokens = left_tokens.len().min(right_tokens.len()).max(1) as f32;
@@ -1544,8 +1574,8 @@ fn story_match_score(
     let has_distinctive_ascii_topic = left_tokens
         .intersection(right_tokens)
         .any(|token| is_cross_language_identity_token(token) && token.len() >= 4);
-    let shared_cross_language_identities = left_tokens
-        .intersection(right_tokens)
+    let shared_cross_language_identities = shared_stems
+        .iter()
         .filter(|token| is_cross_language_identity_token(token))
         .count();
     let has_shared_event_action = left_tokens
@@ -1634,6 +1664,18 @@ fn story_match_score(
     }
 }
 
+fn is_inflection_of_shared(
+    token: &str,
+    left_tokens: &BTreeSet<String>,
+    right_tokens: &BTreeSet<String>,
+) -> bool {
+    token.is_ascii()
+        && (3..token.len()).any(|length| {
+            let stem = &token[..length];
+            left_tokens.contains(stem) && right_tokens.contains(stem)
+        })
+}
+
 fn is_generic_story_action_lexeme(token: &str) -> bool {
     matches!(
         token,
@@ -1667,66 +1709,93 @@ fn is_cross_language_identity_token(token: &str) -> bool {
         && (token.len() >= 3
             || (token.len() >= 2 && token.chars().any(|character| character.is_ascii_digit())))
         && !token.starts_with("__")
-        && !matches!(
-            token,
-            "ai" | "api"
-                | "app"
-                | "apps"
-                | "new"
-                | "model"
-                | "models"
-                | "team"
-                | "premium"
-                | "talk"
-                | "talks"
-                | "lease"
-                | "computing"
-                | "power"
-                | "deal"
-                | "data"
-                | "centre"
-                | "center"
-                | "potential"
-                | "billion"
-                | "price"
-                | "prices"
-                | "raise"
-                | "raises"
-                | "increase"
-                | "increases"
-                | "cost"
-                | "costs"
-                | "subscription"
-                | "subscriptions"
-                | "tariff"
-                | "tariffs"
-                | "threat"
-                | "threaten"
-                | "threatens"
-                | "threatened"
-                | "launch"
-                | "launches"
-                | "release"
-                | "released"
-                | "access"
-                | "support"
-                | "website"
-                | "websites"
-                | "social"
-                | "media"
-                | "post"
-                | "posts"
-                | "company"
-                | "startup"
-                | "start"
-                | "secure"
-                | "lets"
-                | "seeing"
-                | "password"
-                | "passwords"
-                | "without"
-                | "your"
-        )
+        // 1–31 的纯数字多是日期（“10 月 15 日”），不能说明是同一事件；49.99 这类数字保留。
+        && !token.parse::<u8>().is_ok_and(|number| number <= 31)
+        // 词形变化（releases、launched）与原形同样不具辨识度。
+        && ![
+            Some(token),
+            token.strip_suffix('s'),
+            token.strip_suffix("es"),
+            token.strip_suffix('d'),
+            token.strip_suffix("ed"),
+        ]
+        .into_iter()
+        .flatten()
+        .any(is_generic_identity_word)
+}
+
+fn is_generic_identity_word(token: &str) -> bool {
+    matches!(
+        token,
+        "ai" | "api"
+            | "app"
+            | "apps"
+            | "new"
+            | "model"
+            | "models"
+            | "team"
+            | "premium"
+            | "talk"
+            | "talks"
+            | "lease"
+            | "computing"
+            | "power"
+            | "deal"
+            | "data"
+            | "centre"
+            | "center"
+            | "potential"
+            | "billion"
+            | "price"
+            | "prices"
+            | "raise"
+            | "raises"
+            | "increase"
+            | "increases"
+            | "cost"
+            | "costs"
+            | "subscription"
+            | "subscriptions"
+            | "tariff"
+            | "tariffs"
+            | "threat"
+            | "threaten"
+            | "threatens"
+            | "threatened"
+            | "launch"
+            | "launches"
+            | "release"
+            | "released"
+            | "access"
+            | "support"
+            | "website"
+            | "websites"
+            | "social"
+            | "media"
+            | "post"
+            | "posts"
+            | "company"
+            | "startup"
+            | "start"
+            | "secure"
+            | "lets"
+            | "seeing"
+            | "password"
+            | "passwords"
+            | "without"
+            | "your"
+            | "unveil"
+            | "announce"
+            | "first"
+            | "second"
+            | "third"
+            | "fourth"
+            | "fifth"
+            | "open"
+            | "weight"
+            | "just"
+            | "breaking"
+    )
 }
 
 fn story_entity_aliases(tokens: &BTreeSet<String>) -> Vec<String> {
@@ -1910,6 +1979,44 @@ mod tests {
             "全球市场今日走势",
             false,
             Duration::hours(1),
+        ));
+    }
+
+    #[test]
+    fn generic_words_and_dates_do_not_bridge_unrelated_events() {
+        // 2026-10 生产中把不同事件连成大簇的真实配对。
+        for (left, right) in [
+            (
+                "Second wave of early prison releases under way in England and Wales",
+                "Apple releases second RCs for macOS Sequoia 15.8.2 and Tahoe 26.7.2",
+            ),
+            (
+                "特斯拉10月15日发布新款跑车Roadster，并公开了利用SpaceX的引擎技术使车辆悬浮飞行的测试",
+                "Meta 发布开放权重模型 Muse Spark Open：本地跑要两台 512GB 内存的 Mac Studio  Meta 10 月 15 日发布 Muse Spark Open",
+            ),
+            (
+                "Three children, one teacher killed in Oregon elementary school shooting",
+                "Peshawar mourns children killed in school roof collapse",
+            ),
+            (
+                "Community 'heartbroken and horrified' after Oregon school shooting",
+                "French anti-terror investigators probe True Crime Community link to school shooting",
+            ),
+            (
+                "Black Forest Labs launched FLUX 3 Image Klein, its new open-weight image model!",
+                "JUST IN: Meta releases Muse Spark Open, which it calls the most capable US open-weight AI model",
+            ),
+        ] {
+            assert!(
+                !titles_match(left, right, false, Duration::hours(2)),
+                "{left} / {right}"
+            );
+        }
+        assert!(titles_match(
+            "XBOX has introduced its new XBOX Nano Controller for $49.99",
+            "微软推出史上最小Xbox Nano手柄 售价49.99美元",
+            false,
+            Duration::hours(2),
         ));
     }
 

@@ -30,7 +30,7 @@ pub async fn extract_article_content(
         return ExtractedContent {
             text: normalized_fallback.clone(),
             error: if normalized_fallback.is_empty() {
-                Some("V2EX Feed 未提供正文，已跳过原文抽取".to_string())
+                Some("Feed 未提供正文，该站点已跳过原文抽取".to_string())
             } else {
                 None
             },
@@ -118,7 +118,11 @@ pub fn feed_content_is_preferred(url: &str) -> bool {
     let Ok(parsed) = reqwest::Url::parse(url) else {
         return false;
     };
-    matches!(parsed.host_str(), Some("www.v2ex.com" | "v2ex.com"))
+    // NodeSeek 原文页对服务器请求一律 403，抽取只会白白失败。
+    matches!(
+        parsed.host_str(),
+        Some("www.v2ex.com" | "v2ex.com" | "www.nodeseek.com" | "nodeseek.com")
+    )
 }
 
 #[derive(Debug, Error)]
@@ -627,11 +631,14 @@ mod tests {
     }
 
     #[test]
-    fn prefers_feed_content_for_v2ex_article_urls() {
+    fn prefers_feed_content_for_community_article_urls() {
         assert!(feed_content_is_preferred(
             "https://www.v2ex.com/t/1208778#reply5"
         ));
         assert!(feed_content_is_preferred("https://v2ex.com/t/1208778"));
+        assert!(feed_content_is_preferred(
+            "https://www.nodeseek.com/post-988661-1"
+        ));
         assert!(!feed_content_is_preferred("https://example.com/t/1208778"));
     }
 

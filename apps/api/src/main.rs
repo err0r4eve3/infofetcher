@@ -79,11 +79,23 @@ async fn main() -> anyhow::Result<()> {
                 .ok()
                 .and_then(|value| value.parse().ok())
                 .unwrap_or(60);
-            let count = intelligence::recluster_recent(&state, hours, min_feed_quality).await?;
+            // 只重排信源数达到阈值的簇，用于拆开错误合并的大簇，其余簇（含语义链接）保持不动。
+            let min_story_sources = std::env::var("RECLUSTER_MIN_STORY_SOURCES")
+                .ok()
+                .and_then(|value| value.parse().ok())
+                .unwrap_or(0);
+            let count = intelligence::recluster_recent(
+                &state,
+                hours,
+                min_feed_quality,
+                min_story_sources,
+            )
+            .await?;
             tracing::info!(
                 count,
                 hours,
                 min_feed_quality,
+                min_story_sources,
                 "recent story intelligence rebuilt"
             );
             Ok(())
