@@ -1017,11 +1017,12 @@ export function WorldRadar({
                     <button type="button" className="wire-item-open" onClick={() => openWireEvent(item.event_id)}>{item.message}</button>
                   </h2>
                   <div>
-                    <span className="wire-verification"><ShieldCheck size={13} aria-hidden="true" />{item.verification_label}</span>
+                    <span className="wire-verification" title={item.verification_reason}><ShieldCheck size={13} aria-hidden="true" />{item.verification_label}</span>
                     <span>{item.cited_source_count}/{item.source_count} 源支撑</span>
                     <span>材料分 {item.verification_score}</span>
                   </div>
-                  <small>{item.verification_reason}</small>
+                  {/* Corroborated/developing reasons only restate the source counts above. */}
+                  {(item.verification_status === 'disputed' || item.verification_status === 'insufficient') && <small>{item.verification_reason}</small>}
                 </div>
                 <ArrowRight size={17} aria-hidden="true" />
               </article>

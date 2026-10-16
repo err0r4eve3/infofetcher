@@ -1880,10 +1880,14 @@ a.secondary-button:hover,
 }
 
 .article-row p {
+  display: -webkit-box;
   margin: 0;
+  overflow: hidden;
   color: var(--text-muted);
   font-size: 13px;
   line-height: 1.48;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
 }
 
 .article-row.read p,
@@ -1912,9 +1916,36 @@ a.secondary-button:hover,
   line-height: 1.2;
 }
 
+/* Article flags read as one quiet metadata line, not a row of chips. */
+.article-flags {
+  flex-wrap: nowrap;
+  gap: 0;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-soft);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.article-flags span {
+  min-height: 0;
+  padding: 0;
+  border-radius: 0;
+  background: transparent;
+  color: inherit;
+  font-size: 12px;
+  font-weight: 400;
+}
+
+.article-flags span + span::before {
+  content: "·";
+  margin: 0 7px;
+}
+
 .article-flags .quality-flag {
-  background: var(--accent-soft);
-  color: var(--accent-strong);
+  background: transparent;
+  color: var(--text-muted);
+  font-weight: 600;
 }
 
 .load-more-button {
@@ -2590,7 +2621,6 @@ a.secondary-button:hover,
 }
 
 :root[data-theme="dark"] .feed-chip,
-:root[data-theme="dark"] .article-flags span,
 :root[data-theme="dark"] .keyword-row span,
 :root[data-theme="dark"] .keyword-chip-row span,
 :root[data-theme="dark"] .keyword-chip-row b {
@@ -3349,8 +3379,13 @@ a.secondary-button:hover,
 
 .wire-item.status-disputed,
 .wire-item.status-corrected {
-  box-shadow: inset 0 0 0 1px var(--danger-border);
+  box-shadow: inset 3px 0 0 var(--danger);
 }
+
+.wire-item.status-corroborated .wire-verification { color: var(--ok); }
+.wire-item.status-disputed .wire-verification,
+.wire-item.status-corrected .wire-verification { color: var(--danger); }
+.wire-item.status-insufficient .wire-verification { color: var(--text-muted); }
 
 .wire-time {
   display: block;
