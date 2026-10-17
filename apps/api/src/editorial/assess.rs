@@ -119,7 +119,9 @@ struct PromptHistory<'a> {
 pub async fn run_turn(state: &AppState) -> AppResult<usize> {
     let editorial = &state.config.editorial;
     let used = sqlx::query_scalar::<_, i64>(
-        "SELECT COUNT(*) FROM event_assessments WHERE assessed_at >= now() - interval '24 hours'",
+        // 只计成功的评审：服务商故障时失败行不消耗当天名额。
+        "SELECT COUNT(*) FROM event_assessments
+         WHERE status = 'done' AND assessed_at >= now() - interval '24 hours'",
     )
     .fetch_one(&state.pool)
     .await?;
@@ -156,6 +158,11 @@ pub async fn run_turn(state: &AppState) -> AppResult<usize> {
                     }
                     written += 1;
                 }
+            }
+            // 连接层错误说明请求没有送达服务商：不记失败、不累计重试次数，留到下一轮。
+            Err(AppError::Reqwest(error)) => {
+                tracing::warn!(%error, "editorial assessment provider unreachable, turn stopped");
+                break;
             }
             Err(error) => {
                 tracing::warn!(%error, events = batch.len(), "editorial assessment batch failed");

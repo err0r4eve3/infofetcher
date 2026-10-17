@@ -81,6 +81,11 @@ pub fn spawn(state: AppState) {
                 {
                     tracing::warn!(%error, "editorial assessment turn failed");
                 }
+                match crate::semantic::retry_failed_links(&state).await {
+                    Ok(0) => {}
+                    Ok(retried) => tracing::info!(retried, "semantic link retry finished"),
+                    Err(error) => tracing::warn!(%error, "semantic link retry failed"),
+                }
                 if last_source_refresh.is_none_or(|at| at.elapsed() >= SOURCE_STATS_INTERVAL) {
                     match sources::refresh(&state).await {
                         Ok(feeds) => tracing::info!(feeds, "feed quality stats refreshed"),

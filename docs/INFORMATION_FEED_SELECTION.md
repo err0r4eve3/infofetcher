@@ -54,6 +54,42 @@ These checks establish retrieval and parser compatibility at the time of testing
 
 Validation: 169 Rust tests passed (5 opt-in database tests skipped), Clippy with warnings denied, 12 frontend tests, TypeScript and the production frontend build. Local browser QA uses synthetic API fixtures; it does not establish deployed behavior or live account subscription creation.
 
+## Pipeline update (2026-10-16 to 2026-10-17)
+
+All figures below come from read-only production queries or a local replay of exported production titles. Times are UTC.
+
+### Findings that drove the changes
+
+- In 24 hours, NodeSeek, V2EX and the X "For you" timeline produced about 38% of 2,778 articles. "For you" had the lowest assessed signal-to-noise ratio (0.059). NodeSeek article pages returned 403 for every server request.
+- Event clustering chained unrelated stories. Examples: 30 Apple articles inside a story about early prison releases in England; Meta's open-weight model and Tesla's Roadster in one story. Root cause: generic words (`releases`, `second`) and date numbers counted as identity tokens, and `killed`/`kill` were counted twice. Online clustering is single-link and merges every matched cluster, so one bad edge joins two topics.
+- Major outlets supplied only feed summaries: NYT (403), FT (403), NPR (connection reset for non-browser clients), Le Monde (402). The assessor scored events lower when the body was missing.
+- From 2026-10-16 22:00 the LLM endpoint `cpa.ladymiao.net` returned NXDOMAIN at its authoritative servers. Every assessment, same-event check and title translation failed. Failed assessments still consumed the daily budget of 600, and multi-source events fell from 10% to 5% of the 24-hour total.
+
+### Changes
+
+| Area | Change | Commit |
+| --- | --- | --- |
+| Clustering | Identity tokens ignore inflected stop words, ordinals and dates 1–31; shared-token counts use stems; more country and US-state geography markers. `recluster-recent` accepts `RECLUSTER_MIN_STORY_SOURCES` to rebuild only large clusters. | `b9f4b47` |
+| Extraction | NodeSeek uses feed content (as V2EX does). NPR articles are fetched from `text.npr.org`. | `b9f4b47`, `f94937e` |
+| Assessment input | When the representative body is under 600 characters, the longest body from another source in the same event is appended with attribution. | `f94937e` |
+| Sources | Web Watch gains a `link_prefix` article-list mode, used for Anthropic Research. Reading view links to removepaywall only when extraction failed and only on user click; paywalled full text is not fetched automatically. | `1496439` |
+| Resilience | The daily assessment budget counts only successful assessments. A transport error stops the turn without recording a failure. Same-event checks that failed during an outage are retried for 48 hours. | this update |
+
+Production operations (no code): muted X "For you"; added 28 free sources (DW, PBS, Euronews, Politico Europe, Foreign Policy, The Diplomat, Meduza, CNBC, WHO, BBC/RFI/DW Chinese, CBC, ABC Australia, AP summaries, Lianhe Zaobao, Nikkei Asia summaries, Nature, MIT Technology Review, Quanta, Google DeepMind, Google Research, The Conversation, Rest of World, OpenAI Research, Anthropic Research); upgraded RSSHub from the 2026-07-23 image to 2026-10-17 after checking that all 15 existing routes returned the same item counts; rebuilt 1,106 articles in clusters with six or more sources.
+
+### Verified results
+
+- Replay of 9,626 production articles (72 hours): the known mixed clusters disappeared and multi-source clusters changed from 466 to 463. In production, after the rebuild, no 72-hour story contained both topics of any known bad pair.
+- The 28 new sources fetched without failure. Most delivered full text for nearly all items; Times of India, PBS, AP and Nikkei deliver mostly summaries.
+- During the LLM outage the assessor stops after one attempt per turn and writes no failure rows.
+
+### Open items
+
+- The LLM provider is unavailable. Assessment, same-event linking, translation and summaries resume only after `LLM_*` and `TRANSLATION_*` point to a reachable endpoint. The previous Luna endpoint returns 403 from the server.
+- Explicit feedback is almost unused (six event actions in total), so preference transfer has no signal. Implicit signals (open, save) need exposure logging first.
+- Feed titles are overwritten from the feed on every fetch, so manual renames do not persist.
+- Washington Post World (feed 502) and LINUX DO (Cloudflare 403, no RSSHub route) remain failing with daily back-off.
+
 ## Verified Baseline
 
 Read-only production snapshot on 2026-07-14:

@@ -69,6 +69,41 @@ pub fn spawn_link(state: &AppState, article_id: Uuid) {
     });
 }
 
+/// 服务商故障期间同事件判断全部失败的文章，入库后不会再判断；恢复后在这里补做。
+/// 只取 48 小时内、所有判断都失败、仍是单篇簇的文章；再遇到连接错误就停止本轮。
+pub async fn retry_failed_links(state: &AppState) -> AppResult<usize> {
+    if !enabled(state) {
+        return Ok(0);
+    }
+    let ids = sqlx::query_scalar::<_, Uuid>(
+        "SELECT d.article_id
+         FROM story_link_decisions d
+         JOIN articles a ON a.id = d.article_id
+         WHERE d.created_at >= now() - interval '48 hours'
+           AND a.story_id IS NOT NULL
+           AND (SELECT count(*) FROM articles x WHERE x.story_id = a.story_id) = 1
+         GROUP BY d.article_id
+         HAVING bool_and(d.verdict = 'error')
+            AND max(d.created_at) < now() - interval '30 minutes'
+         ORDER BY max(d.created_at) DESC
+         LIMIT 30",
+    )
+    .fetch_all(&state.pool)
+    .await?;
+    let mut retried = 0;
+    for article_id in ids {
+        match link_new_article(state, article_id).await {
+            Ok(()) => retried += 1,
+            Err(AppError::Reqwest(error)) => {
+                tracing::warn!(%error, retried, "semantic link retry stopped, provider unreachable");
+                break;
+            }
+            Err(error) => tracing::warn!(%article_id, %error, "semantic link retry failed"),
+        }
+    }
+    Ok(retried)
+}
+
 async fn link_new_article(state: &AppState, article_id: Uuid) -> AppResult<()> {
     ensure_loaded(state).await?;
     let Some(row) = sqlx::query(
