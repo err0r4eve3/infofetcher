@@ -63,7 +63,7 @@ All figures below come from read-only production queries or a local replay of ex
 - In 24 hours, NodeSeek, V2EX and the X "For you" timeline produced about 38% of 2,778 articles. "For you" had the lowest assessed signal-to-noise ratio (0.059). NodeSeek article pages returned 403 for every server request.
 - Event clustering chained unrelated stories. Examples: 30 Apple articles inside a story about early prison releases in England; Meta's open-weight model and Tesla's Roadster in one story. Root cause: generic words (`releases`, `second`) and date numbers counted as identity tokens, and `killed`/`kill` were counted twice. Online clustering is single-link and merges every matched cluster, so one bad edge joins two topics.
 - Major outlets supplied only feed summaries: NYT (403), FT (403), NPR (connection reset for non-browser clients), Le Monde (402). The assessor scored events lower when the body was missing.
-- From 2026-10-16 22:00 the LLM endpoint `cpa.ladymiao.net` returned NXDOMAIN at its authoritative servers. Every assessment, same-event check and title translation failed. Failed assessments still consumed the daily budget of 600, and multi-source events fell from 10% to 5% of the 24-hour total.
+- From 2026-10-16 22:00 the LLM endpoint `cpa.ladymiao.net` returned NXDOMAIN at its authoritative servers. Every assessment, same-event check and title translation failed. Failed assessments still consumed the daily budget of 600, and multi-source events fell from 10% to 5% of the 24-hour total. On 2026-10-17 20:14 production switched to `cpa1.cat-infra.com`; within five minutes 46 LLM calls succeeded with no transport errors, 35 events were assessed and the first 30 outage articles were re-checked.
 
 ### Changes
 
@@ -85,7 +85,6 @@ Production operations (no code): muted X "For you"; added 28 free sources (DW, P
 
 ### Open items
 
-- The LLM provider is unavailable. Assessment, same-event linking, translation and summaries resume only after `LLM_*` and `TRANSLATION_*` point to a reachable endpoint. The previous Luna endpoint returns 403 from the server.
 - Explicit feedback is almost unused (six event actions in total), so preference transfer has no signal. Implicit signals (open, save) need exposure logging first.
 - Feed titles are overwritten from the feed on every fetch, so manual renames do not persist.
 - Washington Post World (feed 502) and LINUX DO (Cloudflare 403, no RSSHub route) remain failing with daily back-off.

@@ -235,7 +235,7 @@ impl Config {
         let feed_max_bytes = env_usize("FEED_MAX_BYTES", 5 * 1024 * 1024).max(64 * 1024);
         let article_max_bytes = env_usize("ARTICLE_MAX_BYTES", 8 * 1024 * 1024).max(64 * 1024);
         let allow_private_fetch = env_bool("ALLOW_PRIVATE_FETCH", false);
-        let llm_base_url = env_string("LLM_BASE_URL", "https://cpa.ladymiao.net/v1");
+        let llm_base_url = env_string("LLM_BASE_URL", "https://cpa1.cat-infra.com/v1");
         let llm_api_key = env_string("LLM_API_KEY", "");
         let llm_model = env_string("LLM_MODEL", "claude-haiku-5-5");
         let llm_timeout = Duration::from_secs(env_u64("LLM_TIMEOUT_SECONDS", 45).max(1));
@@ -252,7 +252,7 @@ impl Config {
         let event_agent_update_debounce = Duration::from_secs(
             env_u64("EVENT_AGENT_UPDATE_DEBOUNCE_SECONDS", 30 * 60).min(6 * 60 * 60),
         );
-        let translation_base_url = env_string("TRANSLATION_BASE_URL", "https://cpa.ladymiao.net/v1");
+        let translation_base_url = env_string("TRANSLATION_BASE_URL", "https://cpa1.cat-infra.com/v1");
         let translation_api_key = env_string("TRANSLATION_API_KEY", "");
         let translation_model = env_string("TRANSLATION_MODEL", "claude-haiku-5-5");
         let translation_timeout =

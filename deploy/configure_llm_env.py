@@ -15,9 +15,9 @@ from pathlib import Path
 
 
 UPDATES = {
-    "LLM_BASE_URL": "https://cpa.ladymiao.net/v1",
+    "LLM_BASE_URL": "https://cpa1.cat-infra.com/v1",
     "LLM_MODEL": "claude-haiku-5-5",
-    "TRANSLATION_BASE_URL": "https://cpa.ladymiao.net/v1",
+    "TRANSLATION_BASE_URL": "https://cpa1.cat-infra.com/v1",
     "TRANSLATION_MODEL": "claude-haiku-5-5",
 }
 
