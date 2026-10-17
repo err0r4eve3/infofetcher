@@ -12,7 +12,9 @@ use uuid::Uuid;
 use crate::{
     config::Config,
     error::{AppError, AppResult},
-    extractor::{best_article_text, clean_extracted_text, extract_article_content},
+    extractor::{
+        best_article_text, clean_extracted_text, extract_article_content, title_only_source,
+    },
     feeds::{canonicalize_url, hash_url, parse_feed_bytes},
     hub,
     intelligence::{
@@ -745,7 +747,10 @@ pub async fn fetch_feed_by_id(state: &AppState, feed_id: Uuid) -> AppResult<()> 
 
     let mut search_documents = Vec::new();
     let mut changed_article_ids = Vec::new();
-    for item in parsed.items {
+    for mut item in parsed.items {
+        if title_only_source(&item.url) {
+            item.content.clear();
+        }
         if let Some(existing_id) = existing_article_matches_feed_item(
             state,
             feed_id,

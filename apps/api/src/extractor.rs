@@ -25,6 +25,12 @@ pub async fn extract_article_content(
     fallback: &str,
     cookie_header: Option<&str>,
 ) -> ExtractedContent {
+    if title_only_source(url) {
+        return ExtractedContent {
+            text: String::new(),
+            error: None,
+        };
+    }
     let normalized_fallback = clean_extracted_text(fallback);
     if feed_content_is_preferred(url) {
         return ExtractedContent {
@@ -115,6 +121,19 @@ pub async fn extract_article_content(
             error: Some(err.to_string()),
         },
     }
+}
+
+/// 只收标题与链接的站点：不保存 Feed 描述，也不抓原文。
+pub fn title_only_source(url: &str) -> bool {
+    let Ok(parsed) = reqwest::Url::parse(url) else {
+        return false;
+    };
+    let Some(host) = parsed.host_str() else {
+        return false;
+    };
+    ["scmp.com", "washingtonpost.com"]
+        .iter()
+        .any(|domain| host == *domain || host.ends_with(&format!(".{domain}")))
 }
 
 pub fn feed_content_is_preferred(url: &str) -> bool {
@@ -656,6 +675,18 @@ mod tests {
             "https://www.nodeseek.com/post-988661-1"
         ));
         assert!(!feed_content_is_preferred("https://example.com/t/1208778"));
+    }
+
+    #[test]
+    fn title_only_sources_match_publisher_domains() {
+        assert!(title_only_source(
+            "https://www.scmp.com/news/china/article/1/x"
+        ));
+        assert!(title_only_source(
+            "https://www.washingtonpost.com/world/2026/10/17/x/"
+        ));
+        assert!(!title_only_source("https://notscmp.com/a"));
+        assert!(!title_only_source("https://example.com/scmp.com"));
     }
 
     #[test]
