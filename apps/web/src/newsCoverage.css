@@ -110,9 +110,9 @@
   font-weight: 600;
 }
 .inspector-tabs button[aria-selected="true"] { border-bottom-color: var(--accent); color: var(--text-strong); }
-.event-inspector [role="tabpanel"] { outline-offset: -2px; }
-.event-inspector [role="tabpanel"]:focus-visible { outline: 2px solid var(--accent); }
-.event-inspector .inspector-summary { border-top: 0; }
+:is(.event-inspector, .event-drawer-body) [role="tabpanel"] { outline-offset: -2px; }
+:is(.event-inspector, .event-drawer-body) [role="tabpanel"]:focus-visible { outline: 2px solid var(--accent); }
+:is(.event-inspector, .event-drawer-body) .inspector-summary { border-top: 0; }
 
 .coverage-entry {
   display: flex;

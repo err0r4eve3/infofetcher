@@ -28,7 +28,7 @@ import {
   X,
   XCircle
 } from 'lucide-react'
-import { FormEvent, lazy, memo, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { FormEvent, lazy, memo, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { OsintPanel } from './OsintPanel'
 import { ReportFilterControls } from './ReportFilterControls'
 import { EMPTY_REPORT_FILTERS, filterReportItems, hasReportFilters, type ReportFilters } from './reportFilters'
@@ -201,6 +201,8 @@ export function WorldRadar({
   const briefRequestRef = useRef<AbortController | null>(null)
   const wireRequestRef = useRef<AbortController | null>(null)
   const inspectorRef = useRef<HTMLElement>(null)
+  const drawerOpenerRef = useRef<HTMLElement | null>(null)
+  const [drawerOpen, setDrawerOpen] = useState(false)
   const eventFeedRef = useRef<HTMLElement>(null)
   const selectedCardRef = useRef<HTMLButtonElement | null>(null)
   const selectedArticleId = brief?.items.find((item) => item.event_id === selectedEventId)?.representative_article_id
@@ -694,13 +696,32 @@ export function WorldRadar({
     else url.searchParams.delete('event')
     window.history[mode === 'push' ? 'pushState' : 'replaceState']({ ...window.history.state }, '', url)
     setReportLayout(next)
+    setDrawerOpen(false)
   }
 
+  // The board keeps its place: the event opens in a drawer instead of switching to the list.
   function openSituationEvent(eventId: string) {
+    if (!drawerOpen) drawerOpenerRef.current = document.activeElement as HTMLElement | null
+    writeRadarLocation(view, eventId, 'replace')
+    setSelectedEventId(eventId)
+    setDrawerOpen(true)
+  }
+
+  function closeEventDrawer() {
+    setDrawerOpen(false)
+    writeRadarLocation(view, null, 'replace')
+    const opener = drawerOpenerRef.current
+    drawerOpenerRef.current = null
+    if (opener?.isConnected) opener.focus({ preventScroll: true })
+  }
+
+  function openDrawerEventInList() {
+    const eventId = selectedEventId
+    setDrawerOpen(false)
+    drawerOpenerRef.current = null
     setWorkflow('all')
     setTopic('all')
     setCoverage('all')
-    setSelectedEventId(eventId)
     selectedCardRef.current = null
     changeReportLayout('list', eventId)
     window.requestAnimationFrame(() => {
@@ -708,6 +729,39 @@ export function WorldRadar({
       inspectorRef.current?.scrollIntoView({ block: 'start' })
     })
   }
+
+  const inspectorBody = (
+    detailLoading && !detail ? (
+      <RadarSkeleton compact label="正在读取事件时间线" />
+    ) : detail ? (
+      <EventInspector
+        key={detail.event.event_id}
+        detail={detail}
+        saving={saving}
+        saved={savedEventIds.has(detail.event.event_id)}
+        tracked={watches.some((watch) => watch.enabled && watch.query.trim().toLocaleLowerCase() === detail.event.title.trim().toLocaleLowerCase())}
+        onOpenArticle={(articleId) => onOpenLibrary(undefined, articleId)}
+        onFeedback={sendFeedback}
+        onRegenerate={regenerateDigest}
+        onToggleSaved={() => toggleSavedEvent(detail.event)}
+        onTrack={() => trackEvent(detail.event)}
+      />
+    ) : detailError ? (
+      <div className="radar-empty" role="alert">
+        <Eye /><p>{detailError}</p>
+        <button type="button" className="radar-refresh" onClick={() => { setDetailRetry((value) => value + 1); void loadBrief(true) }}>
+          <RefreshCw size={16} />刷新报告
+        </button>
+        {savedEventIds.has(selectedEventId ?? '') && <button type="button" className="radar-refresh" onClick={() => {
+          setSavedEvents((current) => current.filter((item) => item.event_id !== selectedEventId))
+          writeRadarLocation(readRadarView(), null, 'replace')
+          setSelectedEventId(null)
+        }}>移出稍后</button>}
+      </div>
+    ) : (
+      <div className="radar-empty"><Eye />选择事件查看详情</div>
+    )
+  )
 
   return (
     <div className="radar-shell">
@@ -854,9 +908,13 @@ export function WorldRadar({
           {briefError && <LoadError message={brief ? `${briefError}；当前显示上次成功生成的报告。` : briefError} onRetry={() => void loadBrief(true)} busy={loading} />}
 
           <div hidden={reportLayout !== 'board'} aria-busy={loading}>
-            {brief ? <SituationBoard key={userName} brief={brief} userName={userName} filters={reportFilters} onFiltersChange={changeReportFilters} onOpenEvent={openSituationEvent} />
+            {brief ? <SituationBoard key={userName} brief={brief} userName={userName} filters={reportFilters} activeEventId={drawerOpen ? selectedEventId : null} onFiltersChange={changeReportFilters} onOpenEvent={openSituationEvent} />
               : loading ? <RadarSkeleton label="正在读取态势" /> : null}
           </div>
+
+          {reportLayout === 'board' && <EventDrawer open={drawerOpen} busy={detailLoading} onClose={closeEventDrawer} onOpenInList={openDrawerEventInList}>
+            {inspectorBody}
+          </EventDrawer>}
 
           {brief && reportLayout === 'list' && (
             <nav className="report-topics" aria-label="报告主题筛选">
@@ -939,36 +997,7 @@ export function WorldRadar({
               <button type="button" className="inspector-back" onClick={returnToEvents}>
                 <ArrowLeft size={16} />返回事件列表
               </button>
-              {detailLoading && !detail ? (
-                <RadarSkeleton compact label="正在读取事件时间线" />
-              ) : detail ? (
-                <EventInspector
-                  key={detail.event.event_id}
-                  detail={detail}
-                  saving={saving}
-                  saved={savedEventIds.has(detail.event.event_id)}
-                  tracked={watches.some((watch) => watch.enabled && watch.query.trim().toLocaleLowerCase() === detail.event.title.trim().toLocaleLowerCase())}
-                  onOpenArticle={(articleId) => onOpenLibrary(undefined, articleId)}
-                  onFeedback={sendFeedback}
-                  onRegenerate={regenerateDigest}
-                  onToggleSaved={() => toggleSavedEvent(detail.event)}
-                  onTrack={() => trackEvent(detail.event)}
-                />
-              ) : detailError ? (
-                <div className="radar-empty" role="alert">
-                  <Eye /><p>{detailError}</p>
-                  <button type="button" className="radar-refresh" onClick={() => { setDetailRetry((value) => value + 1); void loadBrief(true) }}>
-                    <RefreshCw size={16} />刷新报告
-                  </button>
-                  {savedEventIds.has(selectedEventId ?? '') && <button type="button" className="radar-refresh" onClick={() => {
-                    setSavedEvents((current) => current.filter((item) => item.event_id !== selectedEventId))
-                    writeRadarLocation(readRadarView(), null, 'replace')
-                    setSelectedEventId(null)
-                  }}>移出稍后</button>}
-                </div>
-              ) : (
-                <div className="radar-empty"><Eye />选择事件查看详情</div>
-              )}
+              {reportLayout === 'list' && inspectorBody}
             </aside>
           </div>
         </main>
@@ -1069,6 +1098,47 @@ export function WorldRadar({
         </main>
       )}
     </div>
+  )
+}
+
+// A modal side sheet: native <dialog> gives the focus trap, inert background and Esc.
+// Closing plays a short exit before the dialog is really closed.
+function EventDrawer({ open, busy, onClose, onOpenInList, children }: {
+  open: boolean
+  busy: boolean
+  onClose: () => void
+  onOpenInList: () => void
+  children: ReactNode
+}) {
+  const ref = useRef<HTMLDialogElement>(null)
+  const [closing, setClosing] = useState(false)
+  useEffect(() => {
+    const dialog = ref.current
+    if (!dialog) return
+    if (open && !dialog.open) { setClosing(false); dialog.showModal() }
+    if (!open && dialog.open) {
+      if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) dialog.close()
+      else setClosing(true)
+    }
+  }, [open])
+  return (
+    <dialog
+      ref={ref}
+      className={`event-drawer${closing ? ' closing' : ''}`}
+      aria-label="事件详情"
+      aria-busy={busy}
+      onCancel={(event) => { event.preventDefault(); onClose() }}
+      onClick={(event) => { if (event.target === event.currentTarget) onClose() }}
+      onAnimationEnd={(event) => {
+        if (closing && event.target === event.currentTarget) { setClosing(false); ref.current?.close() }
+      }}
+    >
+      <div className="event-drawer-bar">
+        <button type="button" className="event-drawer-list" onClick={onOpenInList}>在列表中查看</button>
+        <button type="button" className="event-drawer-close" aria-label="关闭详情" onClick={onClose}><X size={18} aria-hidden="true" /></button>
+      </div>
+      <div className="event-drawer-body">{children}</div>
+    </dialog>
   )
 }
 

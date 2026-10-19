@@ -48,6 +48,8 @@
 .situation-panel li + li { border-top: 1px solid var(--line-soft); }
 .situation-event { display: grid; grid-template-columns: auto minmax(0, 1fr) 15px; align-items: start; gap: 10px; width: 100%; min-height: 44px; padding: 9px 14px; border-radius: 0; text-align: left; background: transparent; color: var(--text); }
 .situation-event:hover { background: var(--item-hover); }
+.situation-event[aria-current="true"] { background: var(--item-active); box-shadow: inset 2px 0 0 var(--accent); }
+.situation-event { transition: background var(--motion-fast) ease; }
 .situation-event > svg { margin-top: 3px; color: var(--text-soft); }
 .situation-event > time { padding-top: 2px; font-size: 12px; color: var(--text-soft); font-variant-numeric: tabular-nums; }
 .situation-rank { display: grid; place-items: center; width: 22px; height: 22px; margin-top: 1px; border-radius: 50%; background: transparent; border: 1px solid var(--line); color: var(--text-muted); font-size: 12px; font-variant-numeric: tabular-nums; }
@@ -94,4 +96,75 @@
 @media (max-width: 360px) {
   .report-heading, .report-view-controls { gap: 8px; }
   .report-heading-actions > time { display: none; }
+}
+
+/* Event drawer: the board stays in place while one event is read. */
+.event-drawer {
+  position: fixed;
+  inset: 0 0 0 auto;
+  width: min(620px, 100vw);
+  height: 100dvh;
+  max-width: none;
+  max-height: none;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  background: var(--layer-focus);
+  color: var(--text);
+  box-shadow: var(--shadow-panel);
+}
+.event-drawer[open] { animation: event-drawer-in 320ms cubic-bezier(0.32, 0.72, 0, 1); }
+.event-drawer.closing { animation: event-drawer-out 180ms cubic-bezier(0.23, 1, 0.32, 1) forwards; }
+.event-drawer::backdrop { background: oklch(0.2 0.01 250 / 0.28); animation: event-drawer-fade 240ms ease-out; }
+.event-drawer.closing::backdrop { animation: event-drawer-fade 180ms ease-out reverse forwards; }
+
+.event-drawer-bar {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+  padding: 8px 12px;
+  background: var(--layer-focus);
+  box-shadow: 0 1px 0 var(--line-soft);
+}
+.event-drawer-bar button {
+  min-height: 36px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 12px;
+  border: 0;
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  transition: background var(--motion-fast) ease, color var(--motion-fast) ease, transform var(--motion-fast) var(--ease-out);
+}
+.event-drawer-close { width: 36px; padding: 0; }
+.event-drawer-bar button:hover { background: var(--item-hover); color: var(--text-strong); }
+.event-drawer-bar button:active { transform: scale(0.97); }
+.event-drawer-bar button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.event-drawer-body > * { animation: event-drawer-fade 200ms ease-out; }
+
+@keyframes event-drawer-in { from { opacity: 0; transform: translateX(40px); } }
+@keyframes event-drawer-out { to { opacity: 0; transform: translateX(24px); } }
+@keyframes event-drawer-fade { from { opacity: 0; } }
+
+@media (max-width: 760px) {
+  .event-drawer { inset: auto 0 0 0; width: 100vw; height: 92dvh; border-radius: 12px 12px 0 0; }
+  .event-drawer[open] { animation-name: event-drawer-in-up; }
+  .event-drawer.closing { animation-name: event-drawer-out-down; }
+}
+@keyframes event-drawer-in-up { from { opacity: 0; transform: translateY(48px); } }
+@keyframes event-drawer-out-down { to { opacity: 0; transform: translateY(32px); } }
+
+@media (prefers-reduced-motion: reduce) {
+  .event-drawer[open] { animation-name: event-drawer-fade; animation-duration: 160ms; }
 }

@@ -72,53 +72,53 @@
 
 :root[data-theme="dark"] {
   color-scheme: dark;
-  --app-bg: oklch(0.155 0.006 250);
-  --login-bg: oklch(0.17 0.006 250);
+  --app-bg: oklch(0.215 0.006 250);
+  --login-bg: oklch(0.225 0.006 250);
   --pattern-ink: color-mix(in srgb, var(--text) 15%, transparent);
   --pattern-ring: color-mix(in srgb, var(--text) 7%, transparent);
-  --shell-bg: oklch(0.14 0.006 250);
-  --sidebar-bg: oklch(0.18 0.007 250);
-  --panel-bg: oklch(0.19 0.007 250);
-  --reader-bg: oklch(0.175 0.006 250);
-  --surface-bg: oklch(0.188 0.007 250);
-  --surface-muted: oklch(0.225 0.008 250);
-  --surface-soft: oklch(0.26 0.008 250);
-  --item-hover: oklch(0.21 0.008 250);
-  --item-active: oklch(0.24 0.03 258);
-  --line: oklch(0.3 0.008 250);
-  --line-soft: oklch(0.25 0.007 250);
-  --line-strong: oklch(0.42 0.008 250);
+  --shell-bg: oklch(0.205 0.006 250);
+  --sidebar-bg: oklch(0.235 0.007 250);
+  --panel-bg: oklch(0.25 0.007 250);
+  --reader-bg: oklch(0.235 0.006 250);
+  --surface-bg: oklch(0.25 0.007 250);
+  --surface-muted: oklch(0.285 0.008 250);
+  --surface-soft: oklch(0.315 0.008 250);
+  --item-hover: oklch(0.29 0.008 250);
+  --item-active: oklch(0.31 0.035 258);
+  --line: oklch(0.355 0.008 250);
+  --line-soft: oklch(0.31 0.007 250);
+  --line-strong: oklch(0.48 0.008 250);
   --text: oklch(0.84 0.006 250);
   --text-strong: oklch(0.95 0.004 250);
-  --text-muted: oklch(0.7 0.008 250);
-  --text-soft: oklch(0.62 0.008 250);
+  --text-muted: oklch(0.74 0.008 250);
+  --text-soft: oklch(0.67 0.008 250);
   --accent: oklch(0.72 0.13 255);
   --accent-strong: oklch(0.82 0.1 255);
-  --accent-soft: oklch(0.29 0.06 258);
+  --accent-soft: oklch(0.34 0.065 258);
   --accent-border: oklch(0.52 0.11 258);
   --accent-on: oklch(0.16 0.02 258);
   --brand: oklch(0.9 0.004 250);
   --info: oklch(0.76 0.006 250);
-  --info-soft: oklch(0.26 0.008 250);
+  --info-soft: oklch(0.31 0.008 250);
   --ok: oklch(0.8 0.12 155);
-  --ok-soft: oklch(0.28 0.05 155);
+  --ok-soft: oklch(0.33 0.055 155);
   --danger: oklch(0.78 0.12 25);
-  --danger-soft: oklch(0.27 0.06 25);
+  --danger-soft: oklch(0.32 0.065 25);
   --danger-border: oklch(0.52 0.11 25);
   --focus: oklch(0.72 0.13 255 / 0.24);
-  --glass-bg: oklch(0.22 0.008 250 / 0.72);
-  --glass-bg-strong: oklch(0.215 0.008 250 / 0.86);
+  --glass-bg: oklch(0.255 0.008 250 / 0.74);
+  --glass-bg-strong: oklch(0.25 0.008 250 / 0.88);
   --glass-edge: transparent;
   --glass-line: oklch(1 0 0 / 0.08);
   --glass-highlight: oklch(1 0 0 / 0.16);
-  --layer-recessed: oklch(0.225 0.008 250);
-  --layer-work: oklch(0.21 0.008 250);
-  --layer-focus: oklch(0.205 0.008 250);
+  --layer-recessed: oklch(0.235 0.008 250);
+  --layer-work: oklch(0.25 0.008 250);
+  --layer-focus: oklch(0.27 0.008 250);
   --shadow-surface: 0 0 0 1px var(--line-soft);
-  --shadow-window: 0 0 0 1px var(--line), 0 12px 32px oklch(0 0 0 / 0.28);
+  --shadow-window: 0 0 0 1px var(--line), 0 12px 32px oklch(0 0 0 / 0.22);
   --shadow-control: inset 0 0 0 1px var(--line);
   --shadow-primary: none;
-  --shadow-panel: 0 0 0 1px var(--line), 0 20px 48px oklch(0 0 0 / 0.36);
+  --shadow-panel: 0 0 0 1px var(--line), 0 20px 48px oklch(0 0 0 / 0.3);
   --shadow-row: 0 0 0 1px var(--line);
 }
 
@@ -3908,7 +3908,7 @@ a.secondary-button:hover,
   color: var(--text-strong);
 }
 
-.event-inspector h2 {
+:is(.event-inspector, .event-drawer-body) h2 {
   margin: 13px 0 20px;
   color: var(--text-strong);
   font-size: 28px;
@@ -4757,7 +4757,7 @@ a.secondary-button:hover,
 }
 
 .event-card h3,
-.event-inspector h2 {
+:is(.event-inspector, .event-drawer-body) h2 {
   line-height: 1.45;
   overflow-wrap: anywhere;
   text-wrap: pretty;

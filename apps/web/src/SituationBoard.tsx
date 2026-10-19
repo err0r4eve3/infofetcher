@@ -14,10 +14,11 @@ const TOPICS = [{ key: 'all', label: '全部', icon: LayoutGrid }, ...REPORT_SEC
 const PANEL_LIMITS: Record<SituationPanel, number> = { priority: 12, recent: 12, corrections: 5, watches: 5 }
 const REVISIONS = { ADD: '新增', UPDATE: '更新', CONFIRM: '确认', CORRECT: '纠正', CONTRADICT: '分歧' }
 
-export function SituationBoard({ brief, userName, filters, onFiltersChange, onOpenEvent }: {
+export function SituationBoard({ brief, userName, filters, activeEventId, onFiltersChange, onOpenEvent }: {
   brief: NowBrief
   userName: string
   filters: ReportFilters
+  activeEventId: string | null
   onFiltersChange: (filters: ReportFilters) => void
   onOpenEvent: (eventId: string) => void
 }) {
@@ -100,7 +101,7 @@ export function SituationBoard({ brief, userName, filters, onFiltersChange, onOp
       </div> : <div className="situation-panels">
         {panels.filter((panel) => !hidden.includes(panel.key)).map((panel) => <SignalPanel
           key={`${panel.key}:${topic}:${JSON.stringify(filters)}:${brief.window_hours}`} panel={panel.key} label={panel.label} items={panel.items}
-          onHide={() => hidePanel(panel.key)} onOpenEvent={onOpenEvent}
+          activeEventId={activeEventId} onHide={() => hidePanel(panel.key)} onOpenEvent={onOpenEvent}
         />)}
       </div>}
       <p className="situation-footnote">多源报道按去重订阅源数统计，不代表独立核验。<time dateTime={brief.generated_at}>{formatDate(brief.generated_at)} 生成</time></p>
@@ -108,10 +109,11 @@ export function SituationBoard({ brief, userName, filters, onFiltersChange, onOp
   </section>
 }
 
-function SignalPanel({ panel, label, items, onHide, onOpenEvent }: {
+function SignalPanel({ panel, label, items, activeEventId, onHide, onOpenEvent }: {
   panel: SituationPanel
   label: string
   items: EventBriefItem[]
+  activeEventId: string | null
   onHide: () => void
   onOpenEvent: (id: string) => void
 }) {
@@ -122,7 +124,7 @@ function SignalPanel({ panel, label, items, onHide, onOpenEvent }: {
     <header><h3 id={`situation-${panel}`}>{label}</h3><span>{items.length}</span><button type="button" aria-label={`隐藏${label}`} title={`隐藏${label}`} onClick={onHide}><X size={15} aria-hidden="true" /></button></header>
     {!items.length ? <p className="situation-panel-empty">{panel === 'watches' ? '当前筛选没有关注命中' : '当前筛选没有纠正或分歧'}</p> : <ol>
       {visible.map((item, index) => <li key={item.event_id}>
-        <button type="button" className={`situation-event${isCorrection(item) ? ' has-correction' : ''}`} onClick={() => onOpenEvent(item.event_id)}>
+        <button type="button" className={`situation-event${isCorrection(item) ? ' has-correction' : ''}`} aria-current={item.event_id === activeEventId ? 'true' : undefined} onClick={() => onOpenEvent(item.event_id)}>
           {panel === 'priority' ? <span className="situation-rank" aria-hidden="true">{String(index + 1).padStart(2, '0')}</span>
             : panel === 'watches' ? <Bell size={17} aria-hidden="true" />
               : <time dateTime={item.published_at} title={formatDate(item.published_at)}>{new Date(item.published_at).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}</time>}
