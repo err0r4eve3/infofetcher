@@ -144,7 +144,7 @@
 
 .comparison-toolbar { display: flex; justify-content: space-between; gap: 12px; padding-top: 14px; border-top: 1px solid var(--line-soft); }
 .comparison-toolbar label { min-width: 0; max-width: 60%; }
-.comparison-toolbar select { width: 100%; min-height: 44px; padding: 0 8px; border: 1px solid var(--line); border-radius: var(--radius-row); background: var(--layer-focus); color: var(--text); font: inherit; font-size: 13px; text-overflow: ellipsis; }
+.comparison-toolbar select { width: 100%; min-height: 44px; padding: 0 8px; border: 1px solid var(--line); border-radius: var(--radius-row); background: var(--input-bg, var(--layer-focus)); color: var(--text); font: inherit; font-size: 13px; text-overflow: ellipsis; }
 .comparison-count { margin: 8px 0 14px; font-size: 12px; color: var(--text-soft); }
 .comparison-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
 .comparison-article { min-width: 0; display: flex; flex-direction: column; padding-top: 14px; border-top: 1px solid var(--line); }

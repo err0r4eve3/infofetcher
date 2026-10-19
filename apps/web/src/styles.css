@@ -79,54 +79,55 @@
 
 :root[data-theme="dark"] {
   color-scheme: dark;
-  --app-bg: oklch(0.215 0.006 250);
-  --login-bg: oklch(0.225 0.006 250);
+  --app-bg: oklch(0.235 0.006 250);
+  --login-bg: oklch(0.245 0.006 250);
   --pattern-ink: color-mix(in srgb, var(--text) 15%, transparent);
   --pattern-ring: color-mix(in srgb, var(--text) 7%, transparent);
-  --shell-bg: oklch(0.205 0.006 250);
-  --sidebar-bg: oklch(0.235 0.007 250);
-  --panel-bg: oklch(0.25 0.007 250);
-  --reader-bg: oklch(0.235 0.006 250);
-  --surface-bg: oklch(0.25 0.007 250);
-  --surface-muted: oklch(0.285 0.008 250);
-  --surface-soft: oklch(0.315 0.008 250);
-  --item-hover: oklch(0.29 0.008 250);
-  --item-active: oklch(0.31 0.035 258);
-  --line: oklch(0.355 0.008 250);
-  --line-soft: oklch(0.31 0.007 250);
-  --line-strong: oklch(0.48 0.008 250);
+  --shell-bg: oklch(0.225 0.006 250);
+  --sidebar-bg: oklch(0.255 0.007 250);
+  --panel-bg: oklch(0.27 0.007 250);
+  --reader-bg: oklch(0.255 0.006 250);
+  --surface-bg: oklch(0.27 0.007 250);
+  --surface-muted: oklch(0.305 0.008 250);
+  --surface-soft: oklch(0.335 0.008 250);
+  --item-hover: oklch(0.31 0.008 250);
+  --item-active: oklch(0.33 0.035 258);
+  --line: oklch(0.375 0.008 250);
+  --line-soft: oklch(0.33 0.007 250);
+  --line-strong: oklch(0.5 0.008 250);
   --text: oklch(0.84 0.006 250);
   --text-strong: oklch(0.95 0.004 250);
   --text-muted: oklch(0.74 0.008 250);
   --text-soft: oklch(0.67 0.008 250);
   --accent: oklch(0.72 0.13 255);
   --accent-strong: oklch(0.82 0.1 255);
-  --accent-soft: oklch(0.34 0.065 258);
+  --accent-soft: oklch(0.36 0.065 258);
   --accent-border: oklch(0.52 0.11 258);
   --accent-on: oklch(0.16 0.02 258);
   --brand: oklch(0.9 0.004 250);
   --info: oklch(0.76 0.006 250);
-  --info-soft: oklch(0.31 0.008 250);
+  --info-soft: oklch(0.33 0.008 250);
   --ok: oklch(0.8 0.12 155);
-  --ok-soft: oklch(0.33 0.055 155);
+  --ok-soft: oklch(0.35 0.055 155);
   --danger: oklch(0.78 0.12 25);
-  --danger-soft: oklch(0.32 0.065 25);
+  --danger-soft: oklch(0.34 0.065 25);
   --danger-border: oklch(0.52 0.11 25);
   --focus: oklch(0.72 0.13 255 / 0.24);
-  --glass-bg: oklch(0.255 0.008 250 / 0.74);
-  --glass-bg-strong: oklch(0.25 0.008 250 / 0.88);
+  --glass-bg: oklch(0.275 0.008 250 / 0.74);
+  --glass-bg-strong: oklch(0.27 0.008 250 / 0.88);
   --glass-edge: transparent;
   --glass-line: oklch(1 0 0 / 0.08);
   --glass-highlight: oklch(1 0 0 / 0.16);
-  --layer-recessed: oklch(0.235 0.008 250);
-  --layer-work: oklch(0.25 0.008 250);
-  --layer-focus: oklch(0.27 0.008 250);
+  --layer-recessed: oklch(0.255 0.008 250);
+  --layer-work: oklch(0.27 0.008 250);
+  --layer-focus: oklch(0.29 0.008 250);
   --shadow-surface: 0 0 0 1px var(--line-soft);
   --shadow-window: 0 0 0 1px var(--line), 0 12px 32px oklch(0 0 0 / 0.22);
   --shadow-control: inset 0 0 0 1px var(--line);
   --shadow-primary: none;
   --shadow-panel: 0 0 0 1px var(--line), 0 20px 48px oklch(0 0 0 / 0.3);
   --shadow-row: 0 0 0 1px var(--line);
+  --input-bg: oklch(0.215 0.007 250);
 }
 
 
@@ -1674,7 +1675,7 @@ a.secondary-button:hover,
   padding: 0 10px;
   border: 0;
   border-radius: var(--radius-control);
-  background: color-mix(in srgb, var(--surface-bg) 74%, transparent);
+  background: var(--input-bg, color-mix(in srgb, var(--surface-bg) 74%, transparent));
   color: var(--text-muted);
   box-shadow:
     inset 0 1px 0 var(--glass-edge),
@@ -2559,7 +2560,7 @@ a.secondary-button:hover,
 :root[data-theme="dark"] .monitor-form input:not([type="checkbox"]):not([type="range"]),
 :root[data-theme="dark"] .monitor-form select,
 :root[data-theme="dark"] .login-panel input {
-  background: var(--app-bg);
+  background: var(--input-bg, var(--app-bg));
 }
 
 :root[data-theme="dark"] .compact-form button,
@@ -3102,7 +3103,7 @@ a.secondary-button:hover,
   gap: 7px;
   padding: 4px 4px 4px 11px;
   border-radius: var(--radius-row);
-  background: var(--layer-recessed);
+  background: var(--input-bg, var(--layer-recessed));
   color: var(--text-soft);
   box-shadow: inset 0 0 0 1px var(--line-soft);
 }
@@ -4206,7 +4207,7 @@ a.secondary-button:hover,
 .osint-research { margin: 18px 0; padding: 0 0 16px; border-block: 1px solid var(--line-soft); }
 .osint-research-fields { display: flex; flex-wrap: wrap; gap: 12px; }
 .osint-research-fields label { display: grid; flex: 1 1 180px; gap: 6px; min-width: 0; }
-.osint-research-fields input, .osint-research-fields select { width: 100%; min-width: 0; padding: 8px; color: var(--text); background: var(--surface-muted); border: 1px solid var(--line-soft); border-radius: 4px; }
+.osint-research-fields input, .osint-research-fields select { width: 100%; min-width: 0; padding: 8px; color: var(--text); background: var(--input-bg, var(--surface-muted)); border: 1px solid var(--line-soft); border-radius: 4px; }
 .osint-research-result { margin-top: 16px; overflow-wrap: anywhere; }
 .osint-research-result details { margin-top: 12px; }
 .osint-research-result li { margin-block: 8px; }
@@ -4323,7 +4324,7 @@ a.secondary-button:hover,
   border: 1px solid var(--line-soft);
   border-radius: var(--radius-control);
   outline: 0;
-  background: var(--surface-muted);
+  background: var(--input-bg, var(--surface-muted));
   color: var(--text-strong);
 }
 
@@ -4871,10 +4872,10 @@ a.secondary-button:hover,
 .osint-case-list a:hover { color: var(--accent-strong); }
 .osint-case-list small, .osint-entities li > small { display: block; margin-top: 8px; color: var(--text-soft); }
 .osint-review-note { display: grid; gap: 8px; margin: 16px 0; }
-.osint-search { flex: 1; min-width: 0; height: 44px; display: flex; align-items: center; gap: 8px; padding: 0 12px; border-radius: var(--radius-row); background: var(--layer-recessed); color: var(--text-soft); box-shadow: inset 0 0 0 1px var(--line-soft); }
+.osint-search { flex: 1; min-width: 0; height: 44px; display: flex; align-items: center; gap: 8px; padding: 0 12px; border-radius: var(--radius-row); background: var(--input-bg, var(--layer-recessed)); color: var(--text-soft); box-shadow: inset 0 0 0 1px var(--line-soft); }
 .osint-search:focus-within { box-shadow: 0 0 0 3px var(--focus), var(--shadow-control); }
 .osint-casebook .osint-search input { flex: 1; height: 100%; padding: 0; border: 0; outline: 0; background: transparent; color: var(--text-strong); }
-.osint-casebook input, .osint-panel textarea { min-width: 0; width: 100%; padding: 10px; border: 1px solid var(--line-soft); background: var(--surface-muted); color: var(--text); border-radius: 4px; }
+.osint-casebook input, .osint-panel textarea { min-width: 0; width: 100%; padding: 10px; border: 1px solid var(--line-soft); background: var(--input-bg, var(--surface-muted)); color: var(--text); border-radius: 4px; }
 .osint-panel textarea { min-height: 86px; resize: vertical; }
 .osint-research h2 { font-size: 20px; line-height: 1.45; overflow-wrap: anywhere; }
 .osint-panel code { overflow-wrap: anywhere; font-size: 11px; }

@@ -443,7 +443,7 @@ function resizeReaderLayout(layout: ReaderLayout, target: ResizeTarget, delta: n
 }
 
 // Hex of --app-bg per theme; keep in sync with styles.css.
-const THEME_CHROME_COLOR: Record<Theme, string> = { light: '#f0f3f5', dark: '#171a1c' }
+const THEME_CHROME_COLOR: Record<Theme, string> = { light: '#f0f3f5', dark: '#1c1e21' }
 
 export function App() {
   const [user, setUser] = useState<User | null | undefined>(undefined)

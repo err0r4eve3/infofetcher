@@ -18,7 +18,7 @@
 .situation-overview > .report-filter-bar { margin: 0; padding: 0 18px 14px; }
 .situation-toolbar { display: flex; align-items: center; gap: 20px; padding: 10px 18px; }
 .situation-toolbar h2 { margin: 0; font-size: 18px; font-weight: 600; letter-spacing: -.02em; }
-.situation-search { display: flex; align-items: center; gap: 10px; width: min(320px, 45%); min-width: 0; min-height: 44px; padding: 0 12px; border: 1px solid var(--line); border-radius: 6px; color: var(--text-muted); background: var(--layer-recessed); }
+.situation-search { display: flex; align-items: center; gap: 10px; width: min(320px, 45%); min-width: 0; min-height: 44px; padding: 0 12px; border: 1px solid var(--line); border-radius: 6px; color: var(--text-muted); background: var(--input-bg, var(--layer-recessed)); }
 .situation-search input { width: 100%; min-width: 0; padding: 0; border: 0; background: transparent; color: var(--text); box-shadow: none; font-size: 13px; }
 .situation-search:focus-within { outline: 2px solid var(--accent-border); outline-offset: 2px; }
 .situation-search input:focus-visible { outline: none; }
