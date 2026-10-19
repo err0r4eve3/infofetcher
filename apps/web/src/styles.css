@@ -568,7 +568,15 @@ body.is-resizing-panes * {
   white-space: nowrap;
 }
 
+.app-mark-brand button::after {
+  /* Small text control: extend the hit area to about 40px without moving the layout. */
+  content: "";
+  position: absolute;
+  inset: -12px -8px;
+}
+
 .app-mark-brand button {
+  position: relative;
   display: block;
   margin-top: 2px;
   padding: 0;
@@ -824,6 +832,8 @@ a.secondary-button:hover,
 
 .feed-row,
 .folder-row {
+  /* The sidebar scrolls; rows keep their height instead of being squeezed. */
+  flex-shrink: 0;
   width: 100%;
   height: 36px;
   display: grid;
@@ -3101,7 +3111,7 @@ a.secondary-button:hover,
   grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
   gap: 7px;
-  padding: 4px 4px 4px 11px;
+  padding: 2px 2px 2px 11px;
   border-radius: var(--radius-row);
   background: var(--input-bg, var(--layer-recessed));
   color: var(--text-soft);
@@ -3119,8 +3129,9 @@ a.secondary-button:hover,
 }
 
 .radar-top-search button {
-  width: 36px;
-  height: 36px;
+  width: 40px;
+  height: 40px;
+  flex: none;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -4773,6 +4784,11 @@ a.secondary-button:hover,
   flex-shrink: 0;
 }
 
+/* Icons beside 400-weight meta text take a lighter stroke than the 600-weight labels' 2px. */
+:is(.event-meta, .event-change, .wire-verification, .comparison-article, .coverage-statistics dt) svg.lucide {
+  stroke-width: 1.5;
+}
+
 .event-inspector,
 .article-list,
 .reader-pane {
@@ -4916,3 +4932,8 @@ a.secondary-button:hover,
 .osint-document-pages pre { font: inherit; white-space: pre-wrap; overflow-wrap: anywhere; }
 
 .osint-documents li > small { display: block; color: var(--text-muted); margin-block: .2rem; }
+
+@media (pointer: coarse) {
+  .radar-top-search { padding-block: 0; }
+  .radar-top-search button { width: 44px; height: 44px; }
+}
