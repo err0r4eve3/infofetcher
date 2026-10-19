@@ -176,3 +176,11 @@ flowchart LR
 - **网络边界**：Cloudflare 对 OVH 服务器自身出口 IP 返回人机验证（403），本机与 OCI 访问正常，因此没有修改 Cloudflare 规则。
 - **TradingAgents**：新增 `tradingagents/dataflows/infofetcher.py` 与 `tests/test_infofetcher.py`，注册为 `get_news` / `get_global_news` 的 vendor；默认 vendor 仍是 yfinance，需要在配置中显式选用并设置 `INFOFETCHER_INTEL_TOKEN`。
 - **调整**：“被引用文章免清理”移到阶段 2，因为在信号表出现前没有需要保护的引用。
+
+### 2026-10-20：判断接口（vibe-trade 联动）
+
+- `POST /api/v2/intel/judge`（`intel.rs`），同一只读 intel token，先鉴权再解析请求体。请求 `{asset, as_of, lookback_hours?, market_state}`；`market_state` 是调用方算好的行情对象（≤ 8000 字符）。服务端补上同一 `as_of` 的资产新闻 20 条、全局新闻 10 条，用 `LLM_MODEL` 输出 `p_long/p_wait/p_short`（归一化，和偏离 1 超过 0.1 判无效）、`p_up_24h`、最多 4 条理由（证据 id 只保留 `M` 和本次新闻的 `N…`）。
+- 与 §5 原则的偏离：信号本来只描述“发生了什么”，这个接口直接给交易判断。原因是 vibe-trade 所在的 meowboxjp 直连 CPA 被 Cloudflare 拦截，LLM 只能经 infofetcher 调用。判断只进纸面账户的闸门，不下单。
+- 时间点：`as_of` 早于当前 2 小时返回 400。模型训练数据含历史行情，判断只能前向评估。
+- 回滚点：镜像 `infofetcher-api:before-judge-20261019T185454Z`，源码 `/opt/infofetcher-backups/before-judge-20261019T185454Z/intel.rs`。
+- 验证（meowboxjp 经公网）：真实状态请求 200，11 秒，返回 30 条新闻；旧 `as_of` 400；无令牌 401；`market_state` 非对象 400；`/intel/news` 仍 200。
