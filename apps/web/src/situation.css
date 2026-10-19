@@ -79,8 +79,9 @@
   .situation-board { grid-template-columns: minmax(0, 1fr); gap: 12px; margin-top: 10px; }
   .situation-topics { padding: 4px; }
   .situation-topics h2, .situation-scope { display: none; }
-  .situation-topics nav { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 2px; }
-  .situation-topics button { min-height: 44px; padding: 6px; gap: 6px; font-size: 13px; }
+  .situation-topics nav { display: flex; gap: 4px; overflow-x: auto; scrollbar-width: none; }
+  .situation-topics nav::-webkit-scrollbar { display: none; }
+  .situation-topics button { flex: none; min-height: 44px; padding: 6px 10px; gap: 6px; font-size: 13px; }
   .situation-topics button > svg { width: 16px; }
   .situation-toolbar { flex-wrap: wrap; gap: 8px; padding: 12px; }
   .situation-toolbar h2 { font-size: 20px; }
