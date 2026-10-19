@@ -183,6 +183,12 @@ a {
   color: var(--accent-on);
 }
 
+/* Browser-drawn surfaces take the palette too: caret and scrollbars. */
+:root {
+  caret-color: var(--accent);
+  scrollbar-color: var(--line-strong) transparent;
+}
+
 .boot,
 .login-shell {
   position: relative;

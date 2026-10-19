@@ -442,6 +442,9 @@ function resizeReaderLayout(layout: ReaderLayout, target: ResizeTarget, delta: n
   return clampReaderLayout({ ...layout, list: layout.list + delta }, shellWidth)
 }
 
+// Hex of --app-bg per theme; keep in sync with styles.css.
+const THEME_CHROME_COLOR: Record<Theme, string> = { light: '#f0f3f5', dark: '#171a1c' }
+
 export function App() {
   const [user, setUser] = useState<User | null | undefined>(undefined)
   const [error, setError] = useState<string | null>(null)
@@ -450,6 +453,11 @@ export function App() {
   useLayoutEffect(() => {
     document.documentElement.dataset.theme = theme
     document.documentElement.style.colorScheme = theme
+    // Browser chrome (mobile address bar, PWA title bar) follows the chosen theme, not only the OS one.
+    document.querySelectorAll<HTMLMetaElement>('meta[name="theme-color"]').forEach((meta) => {
+      meta.removeAttribute('media')
+      meta.content = THEME_CHROME_COLOR[theme]
+    })
     try {
       window.localStorage.setItem(THEME_STORAGE_KEY, theme)
     } catch {
