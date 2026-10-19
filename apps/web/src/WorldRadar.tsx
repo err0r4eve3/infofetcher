@@ -1187,7 +1187,6 @@ const EventCard = memo(function EventCard({
           {item.watch_names.map((watch) => <span className="watch-hit" key={watch}>命中 {watchDisplayName(watch)}</span>)}
         </div>
       </div>
-      <ArrowRight className="event-open" size={18} aria-hidden="true" />
     </article>
   )
 })

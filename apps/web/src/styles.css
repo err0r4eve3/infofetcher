@@ -3693,7 +3693,7 @@ a.secondary-button:hover,
   width: 100%;
   min-width: 0;
   display: grid;
-  grid-template-columns: 34px minmax(0, 1fr) 20px;
+  grid-template-columns: 34px minmax(0, 1fr);
   align-items: start;
   gap: 13px;
   padding: 18px 16px;
@@ -3866,11 +3866,6 @@ a.secondary-button:hover,
   color: var(--text-strong);
   font-size: 12px;
   font-weight: 600;
-}
-
-.event-open {
-  margin-top: 3px;
-  color: var(--text-soft);
 }
 
 .event-inspector {
@@ -4641,10 +4636,6 @@ a.secondary-button:hover,
     grid-template-columns: 20px minmax(0, 1fr);
     gap: 8px;
     padding: 16px 10px;
-  }
-
-  .event-open {
-    display: none;
   }
 
 

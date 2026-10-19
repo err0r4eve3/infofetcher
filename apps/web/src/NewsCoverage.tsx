@@ -1,4 +1,4 @@
-import { ArrowRight, BookOpen, Layers3 } from 'lucide-react'
+import { BookOpen, Layers3 } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import { formatDate, type EventBriefItem, type EventDetail } from './api'
 import { coverageLabel, evidenceForDisplay, evidenceTimestamp, shortSourceName, sourceNames, type Evidence, type EvidenceOrder } from './coverageModel'
@@ -75,7 +75,7 @@ export function EvidenceComparison({ detail, onOpenArticle }: {
             </dl>
           </details>}
           <footer><span title="材料质量分用于排序，不代表陈述真实">材料质量 {item.quality_score}</span>
-            <button type="button" onClick={() => onOpenArticle(item.article_id)} aria-label={`阅读全文：${item.title}`}>阅读全文<ArrowRight size={14} aria-hidden="true" /></button>
+            <button type="button" onClick={() => onOpenArticle(item.article_id)} aria-label={`阅读全文：${item.title}`}>阅读全文</button>
           </footer>
         </article>)}
       </div>

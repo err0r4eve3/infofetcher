@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { ArrowRight, Bell, FileText, LayoutGrid, Search, X } from 'lucide-react'
+import { Bell, FileText, LayoutGrid, Search, X } from 'lucide-react'
 import type { EventBriefItem, NowBrief } from './api'
 import { formatDate, watchDisplayName } from './api'
 import { isCorrection, readHiddenPanels, SITUATION_PANELS, situationPanelItems, type SituationPanel, type SituationTopic } from './situation'
@@ -138,7 +138,6 @@ function SignalPanel({ panel, label, items, activeEventId, onHide, onOpenEvent }
               <span className="situation-event-sources">{sourceNames(item.source_titles.map(shortSourceName)).slice(0, panel === 'priority' ? 3 : 1).join('、') || '来源待补全'}</span>
             </span>
           </span>
-          <ArrowRight size={15} aria-hidden="true" />
         </button>
       </li>)}
     </ol>}
