@@ -19,6 +19,15 @@ export function sourceNames(names: string[] | null | undefined): string[] {
   return [...new Set((names ?? []).map((name) => name.trim()).filter(Boolean))]
 }
 
+// Feed titles carry a section or tagline: "Section | Brand" puts the brand last,
+// "Brand - Tagline" puts it first.
+export function shortSourceName(name: string): string {
+  const trimmed = name.trim()
+  const piped = trimmed.split(/\s+\|\s+/)
+  const brand = piped.length > 1 ? piped[piped.length - 1] : trimmed.split(/\s+[-–—]\s+/)[0]
+  return brand.length >= 2 ? brand : trimmed
+}
+
 // A missing publication date must remain unknown even when the API supplies a sorting fallback.
 export function evidenceTimestamp(item: Evidence): { kind: 'published' | 'collected' | 'legacy'; value: string | undefined } {
   if (item.reported_published_at === undefined) return { kind: 'legacy', value: item.published_at }

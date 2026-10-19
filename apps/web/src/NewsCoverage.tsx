@@ -1,15 +1,13 @@
 import { ArrowRight, BookOpen, Layers3 } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import { formatDate, type EventBriefItem, type EventDetail } from './api'
-import { coverageLabel, evidenceForDisplay, evidenceTimestamp, sourceNames, type Evidence, type EvidenceOrder } from './coverageModel'
+import { coverageLabel, evidenceForDisplay, evidenceTimestamp, shortSourceName, sourceNames, type Evidence, type EvidenceOrder } from './coverageModel'
 
 export function SourceCoverage({ item }: { item: EventBriefItem }) {
   const names = sourceNames(item.source_titles)
+  const shown = sourceNames(names.map(shortSourceName))
   return <div className="source-coverage">
-    {names.length > 0 && <span className="source-monograms" aria-hidden="true">
-      {names.slice(0, 3).map((name) => <span key={name}>{Array.from(name)[0].toLocaleUpperCase()}</span>)}
-    </span>}
-    <span className="source-names" title={names.join('、')}>{names.slice(0, 3).join('、') || '暂无来源信息'}{names.length > 3 ? ` 等 ${names.length} 个订阅源` : ''}</span>
+    <span className="source-names" title={names.join('、')}>{shown.slice(0, 3).join('、') || '暂无来源信息'}{shown.length > 3 ? ` 等 ${shown.length} 个订阅源` : ''}</span>
     <span className="source-coverage-count">{coverageLabel(item.independent_source_count)}</span>
     {item.independent_source_count === 1 && <span className="single-source-label">单一来源</span>}
   </div>
@@ -30,10 +28,10 @@ export function EvidenceComparison({ detail, onOpenArticle }: {
   return <section className="coverage-comparison" aria-label="报道对照">
     <h3>来源覆盖</h3>
     <dl className="coverage-statistics">
-      <div><dt><Layers3 size={15} aria-hidden="true" />来源组</dt><dd>{sourceCount > 0 ? sourceCount : '待确认'}</dd></div>
+      <div><dt><Layers3 size={15} aria-hidden="true" />累计来源组</dt><dd>{sourceCount > 0 ? sourceCount : '待确认'}</dd></div>
       <div><dt><BookOpen size={15} aria-hidden="true" />可读材料</dt><dd>{detail.evidence.length}</dd></div>
     </dl>
-    <p className="coverage-note">来源组按站点或订阅通道去重，不等于独立核实。{scope ? `已载入 ${scope.returned_articles} / ${scope.total_articles} 条未静音材料，按质量选取最多 30 条。` : '材料数仅统计当前返回的内容，最多 30 条。'}链接站点和订阅名称不代表已核验的原始发布者。</p>
+    <p className="coverage-note">来源组按站点或订阅通道去重，不等于独立核实；累计数包含报告时间窗以外的报道。{scope ? `已载入 ${scope.returned_articles} / ${scope.total_articles} 条未静音材料，按质量选取最多 30 条。` : '材料数仅统计当前返回的内容，最多 30 条。'}链接站点和订阅名称不代表已核验的原始发布者。</p>
     {scope && <p className="coverage-note coverage-scope">当前材料中{scope.duplicate_groups > 0 ? `发现 ${scope.duplicate_groups} 组重复线索` : '尚未识别出重复线索'}。仅比对规范链接与已存正文指纹，未匹配不代表独立报道，转载方向仍待核对。</p>}
     {scope && (scope.feeds_with_failures > 0 || scope.feeds_never_succeeded > 0) && <p className="coverage-caution">当前材料涉及的订阅源：{[
       scope.feeds_with_failures > 0 ? `${scope.feeds_with_failures} 个有连续采集失败` : '',
@@ -59,7 +57,7 @@ export function EvidenceComparison({ detail, onOpenArticle }: {
       <p className="comparison-count" role="status">显示 {evidence.length} 条材料</p>
       <div className="comparison-grid">
         {evidence.map((item) => <article className="comparison-article" key={item.article_id}>
-          <header><span className="source-monogram" aria-hidden="true">{Array.from(item.source_title.trim())[0] || '?'}</span><strong>{item.source_title || '未标注来源'}</strong></header>
+          <header><strong title={item.source_title}>{shortSourceName(item.source_title) || '未标注来源'}</strong></header>
           <EvidenceTime item={item} />
           {item.provenance && <div className="evidence-provenance">
             <span>链接站点：{item.provenance.link_host || '未知'}</span>

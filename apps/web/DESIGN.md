@@ -253,6 +253,9 @@ components:
 - **Do** 在 `prefers-reduced-motion` 下取消位移、旋转和非必要过渡，同时保留状态变化。
 - **Do** 在输入框的 Enter / Escape 处理中先判断 `isComposing`，避免中文输入法选词时误提交或清空。
 - **Do** 标题用 `text-wrap: balance`，正文用 `text-wrap: pretty`，避免末行孤字。
+- **Do** 同一数字只用一个名词：卡片 meta 只显示可信等级，来源数只在来源行出现。报告卡片按时间窗统计来源，详情按事件累计统计，详情里写明“累计”。
+- **Do** 订阅源名称显示短名（`Section | Brand` 取末段，`Brand - 口号` 取首段），完整名称放进 `title`。
+- **Do** 计数在数据到达前不显示，不用 0 占位；徽标数字必须是它旁边标签的数量。
 
 ### Don't:
 

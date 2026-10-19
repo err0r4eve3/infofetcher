@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { coverageLabel, evidenceForDisplay, evidenceTimestamp, matchesCoverage, sourceNames } from '../src/coverageModel.ts'
+import { coverageLabel, evidenceForDisplay, evidenceTimestamp, matchesCoverage, shortSourceName, sourceNames } from '../src/coverageModel.ts'
 
 test('coverage uses source families, not repeated articles or feed titles', () => {
   const repeated = { independent_source_count: 1, source_count: 9, source_titles: ['A', 'A mirror'] }
@@ -46,4 +46,11 @@ test('publication time stays unknown instead of inheriting the API sorting fallb
   })
   assert.deepEqual(evidenceTimestamp(evidence[0]), { kind: 'legacy', value: evidence[0].published_at })
   assert.deepEqual(evidenceForDisplay([evidence[1], undated], '', 'latest').map(e => e.article_id), ['a', 'b'])
+})
+
+test('feed taglines are dropped from the displayed source name', () => {
+  assert.equal(shortSourceName('Al Jazeera - Breaking News, World News and Video from Al Jazeera'), 'Al Jazeera')
+  assert.equal(shortSourceName('World news | The Guardian'), 'The Guardian')
+  assert.equal(shortSourceName('Reuters'), 'Reuters')
+  assert.equal(shortSourceName('Hacker-News'), 'Hacker-News')
 })

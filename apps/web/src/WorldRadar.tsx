@@ -888,14 +888,16 @@ export function WorldRadar({
 
           <div className="radar-workspace" hidden={reportLayout !== 'list'}>
             <section ref={eventFeedRef} className="event-feed" aria-label="全面事件报告" aria-busy={loading} tabIndex={-1}>
-              {brief && <ReportFilterControls items={workflowItems} value={reportFilters} onChange={changeReportFilters} />}
-              {brief && <div className="coverage-filters" aria-label="来源覆盖筛选">
+              {brief && <div className="report-filter-row">
+              <ReportFilterControls items={workflowItems} value={reportFilters} onChange={changeReportFilters} />
+              <div className="coverage-filters" aria-label="来源覆盖筛选">
                 <div>{([
                   ['all', '全部覆盖'], ['multiple', '多源报道'], ['single', '单一来源']
                 ] as const).map(([value, label]) => <button type="button" key={value} aria-pressed={coverage === value} onClick={() => filterReport(topic, value)}>
                   {label}<span>{matchingItems.filter((item) => matchesCoverage(item, value)).length}</span>
                 </button>)}</div>
-                <span className="coverage-result-count" role="status">{visibleItems.length} 项事件</span>
+                <span className="visually-hidden" role="status">{visibleItems.length} 项事件</span>
+              </div>
               </div>}
               {loading && !brief ? (
                 <RadarSkeleton label="正在生成全面报告" />
@@ -1047,7 +1049,7 @@ export function WorldRadar({
                     <h2>{watchDisplayName(watch.name)}</h2>
                     <span>{watch.notification_mode === 'urgent' ? '紧急通知' : watch.notification_mode === 'brief' ? '进入简报' : '仅追踪'}</span>
                   </div>
-                  <p>{watch.query}</p>
+                  {watch.query.trim() !== watchDisplayName(watch.name).replace(/^追踪 · /, '').trim() && <p>{watch.query}</p>}
                   <small>影响门槛 {watch.min_impact} · {watch.enabled ? '正在参与排序' : '已暂停'}</small>
                 </div>
                 <div className="watch-actions">
@@ -1068,6 +1070,11 @@ export function WorldRadar({
       )}
     </div>
   )
+}
+
+// The source line already shows the count, so the card keeps only the confidence level.
+function confidenceLevel(label: string): string {
+  return label.split(' · ').filter((part) => !part.includes('源')).join(' · ')
 }
 
 // The card is an article so its title stays a navigable heading; only the title button is interactive,
@@ -1095,7 +1102,7 @@ const EventCard = memo(function EventCard({
           {saved && <span className="workflow-state"><Bookmark size={13} aria-hidden="true" />稍后</span>}
           {item.feedback === 'known' && <span className="workflow-state"><CheckCircle2 size={13} aria-hidden="true" />已完成</span>}
           <span><Clock3 size={13} aria-hidden="true" /><time dateTime={item.published_at}>{formatDate(item.published_at)}</time></span>
-          <span><ShieldCheck size={13} aria-hidden="true" />{item.confidence_label}</span>
+          <span><ShieldCheck size={13} aria-hidden="true" />可信度{confidenceLevel(item.confidence_label)}</span>
           {item.editorial_score != null && <span title="按内容类型的评分标准给出的 0–10 分">评审 {item.editorial_score.toFixed(1)}</span>}
         </div>
         <h3>
@@ -1143,7 +1150,7 @@ function EventInspector({
     <div className="event-inspector-content">
       <div className="inspector-heading">
         <RevisionBadge type={event.revision_type} />
-        <span>{coverageLabel(event.independent_source_count)} · {detail.evidence.length} 条可读材料</span>
+        <span title="事件全部报道，不限报告时间窗">累计 {coverageLabel(event.independent_source_count)} · {detail.evidence.length} 条可读材料</span>
         <button type="button" disabled={saving} onClick={() => void onRegenerate()}>
           <RefreshCw size={13} />重新核验
         </button>
@@ -1214,7 +1221,7 @@ function EventInspector({
         setInspectorView('coverage')
         document.getElementById('inspector-tab-coverage')?.focus()
       }}>
-        <BookOpen size={18} aria-hidden="true" /><span><strong>报道对照</strong><small>{event.independent_source_count === 1 ? '单一来源，仍需交叉核对' : `${coverageLabel(event.independent_source_count)} · ${detail.evidence.length} 条可读材料`}</small></span><ArrowRight size={17} aria-hidden="true" />
+        <BookOpen size={18} aria-hidden="true" /><span><strong>报道对照</strong><small>{event.independent_source_count === 1 ? '单一来源，仍需交叉核对' : `累计 ${coverageLabel(event.independent_source_count)} · ${detail.evidence.length} 条可读材料`}</small></span><ArrowRight size={17} aria-hidden="true" />
       </button>
       <OsintPanel key={event.event_id} eventId={event.event_id} />
       </div>

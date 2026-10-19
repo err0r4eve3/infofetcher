@@ -1,5 +1,6 @@
 import { filterSources, type SourceStatus } from './sourceFilters'
 import './sourceFilters.css'
+import { shortSourceName } from './coverageModel'
 import {
   ArrowDown,
   ArrowLeft,
@@ -1636,7 +1637,6 @@ function ReaderApp({
           aria-pressed={contentView === 'today'}
         >
           <span>今日重点</span>
-          <b>{metrics?.stories ?? 0}</b>
         </button>
 
         {monitors.length > 0 && (
@@ -1663,7 +1663,7 @@ function ReaderApp({
           aria-pressed={contentView === 'all' && selectedFeedId === null && selectedFolderId === null}
         >
           <span>全部订阅</span>
-          <b>{metrics?.unread ?? 0}</b>
+          {metrics && <b title="未读">{metrics.unread}</b>}
         </button>
 
         {ungroupedFeeds.length > 0 && (
@@ -1786,7 +1786,7 @@ function ReaderApp({
               >
                 <div className="article-row-top">
                   {article.is_read ? <CheckCircle2 size={14} /> : <Circle size={14} />}
-                  <span>{article.feed_title}</span>
+                  <span title={article.feed_title}>{shortSourceName(article.feed_title)}</span>
                   <time>{formatDate(article.published_at ?? article.fetched_at)}</time>
                 </div>
                 <strong>{article.title}</strong>
@@ -1833,7 +1833,7 @@ function ReaderApp({
             </button>
             <header className="reader-header">
               <div>
-                <span className="feed-chip">{selectedArticle.feed_title}</span>
+                <span className="feed-chip" title={selectedArticle.feed_title}>{shortSourceName(selectedArticle.feed_title)}</span>
                 <h1>
                   {showTranslation && selectedArticle.translation?.status === 'done'
                     ? selectedArticle.translation.translated_title || selectedArticle.title
@@ -1913,7 +1913,7 @@ function ReaderApp({
                     className={article.id === selectedArticle.id ? 'active' : ''}
                     onClick={() => setSelectedArticleId(article.id)}
                   >
-                    <span>{article.feed_title}</span>
+                    <span title={article.feed_title}>{shortSourceName(article.feed_title)}</span>
                     <strong>{article.title}</strong>
                   </button>
                 ))}

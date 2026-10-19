@@ -57,11 +57,19 @@
 
 .coverage-filters > div { display: flex; gap: 2px; }
 
+/* The pressed coverage chip already shows the visible count. On a wide list column the
+   chips share the search row, so the list starts one row higher. */
+.event-feed { container-type: inline-size; }
+@container (min-width: 640px) {
+  .report-filter-row { display: flex; align-items: flex-start; gap: 12px; margin-bottom: 18px; }
+  .report-filter-row > .report-filter-bar { flex: 1 1 260px; min-width: 0; margin-bottom: 0; }
+  .report-filter-row > .coverage-filters { flex: none; margin: 0; }
+}
+
 @media (pointer: fine) {
   .report-topics button,
   .coverage-filters button { min-height: 36px; }
 }
-.coverage-result-count { color: var(--text-soft); font-size: 12px; }
 
 .source-coverage {
   display: flex;
@@ -75,23 +83,6 @@
   line-height: 1.6;
 }
 
-.source-monograms { display: flex; padding-right: 4px; }
-.source-monograms > span,
-.source-monogram {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  flex: 0 0 auto;
-  width: 28px;
-  height: 28px;
-  border: 1px solid var(--line);
-  border-radius: 50%;
-  background: var(--layer-focus);
-  color: var(--text-strong);
-  font-size: 12px;
-  font-weight: 600;
-}
-.source-monograms > span + span { margin-left: -5px; }
 .source-names { flex: 0 1 auto; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .source-coverage-count,
 .single-source-label { flex: 0 0 auto; white-space: nowrap; }
@@ -188,7 +179,6 @@
   .coverage-filters { margin-bottom: 14px; }
   .coverage-filters button { padding: 0 8px; gap: 5px; }
   .source-coverage { margin-top: 12px; }
-  .source-monograms { display: none; }
   .comparison-toolbar select { font-size: 16px; }
 }
 @media (max-width: 620px) {

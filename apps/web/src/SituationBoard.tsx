@@ -7,6 +7,7 @@ import './situation.css'
 import { ReportFilterControls } from './ReportFilterControls'
 import { EMPTY_REPORT_FILTERS, filterReportItems, hasReportFilters, type ReportFilters } from './reportFilters'
 import { REPORT_SECTIONS } from './reportSections'
+import { shortSourceName, sourceNames } from './coverageModel'
 
 const TOPICS = [{ key: 'all', label: '全部', icon: LayoutGrid }, ...REPORT_SECTIONS] as const
 // 重点和最近面板默认多露几条，其余面板只作提醒。
@@ -132,7 +133,7 @@ function SignalPanel({ panel, label, items, onHide, onOpenEvent }: {
             <span className="situation-event-meta">
               <span className={`situation-revision type-${item.revision_type}${isCorrection(item) ? ' correction' : ''}`}>{REVISIONS[item.revision_type]}</span>
               {item.independent_source_count >= 2 && <span>{item.independent_source_count} 源</span>}
-              <span className="situation-event-sources">{item.source_titles.slice(0, panel === 'priority' ? 3 : 1).join(' / ') || '来源待补全'}</span>
+              <span className="situation-event-sources">{sourceNames(item.source_titles.map(shortSourceName)).slice(0, panel === 'priority' ? 3 : 1).join('、') || '来源待补全'}</span>
             </span>
           </span>
           <ArrowRight size={15} aria-hidden="true" />
