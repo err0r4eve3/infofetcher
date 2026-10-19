@@ -453,14 +453,12 @@ export function takePrefetched<T>(path: string): Promise<T | null> | null {
   return entry.request as Promise<T | null>
 }
 
+// One formatter instance: constructing Intl.DateTimeFormat per call is slow in long lists.
+const DATE_FORMAT = new Intl.DateTimeFormat('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
+
 export function formatDate(value: string | null): string {
   if (!value) return '未知时间'
   const date = new Date(value)
   if (Number.isNaN(date.getTime())) return '未知时间'
-  return new Intl.DateTimeFormat('zh-CN', {
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit'
-  }).format(date)
+  return DATE_FORMAT.format(date)
 }

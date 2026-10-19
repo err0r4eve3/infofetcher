@@ -476,7 +476,7 @@ export function App() {
   }, [])
 
   if (user === undefined) {
-    return <div className="boot" role="status" aria-live="polite">正在连接阅读器...</div>
+    return <div className="boot" role="status" aria-live="polite">正在连接阅读器…</div>
   }
 
   if (!user) {
@@ -562,7 +562,7 @@ function LoginScreen({
         </label>
         {error && <div className="error-line" role="alert">{error}</div>}
         <button className="primary-button" disabled={submitting || !token}>
-          {submitting ? '登录中...' : '打开信息雷达'}
+          {submitting ? '登录中…' : '打开信息雷达'}
         </button>
       </form>
     </main>
