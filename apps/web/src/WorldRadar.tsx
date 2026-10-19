@@ -8,10 +8,8 @@ import {
   ChevronDown,
   Clock3,
   Compass,
-  Cpu,
   Eye,
   FileSearch,
-  Globe2,
   Inbox,
   Layers3,
   Library,
@@ -28,14 +26,14 @@ import {
   Trash2,
   TrendingUp,
   X,
-  XCircle,
-  type LucideIcon
+  XCircle
 } from 'lucide-react'
 import { FormEvent, lazy, memo, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { OsintPanel } from './OsintPanel'
 import { ReportFilterControls } from './ReportFilterControls'
 import { EMPTY_REPORT_FILTERS, filterReportItems, hasReportFilters, type ReportFilters } from './reportFilters'
 import { SituationBoard } from './SituationBoard'
+import { normalizeReportSection, REPORT_SECTIONS, type ReportSectionKey } from './reportSections'
 import { EvidenceComparison, SourceCoverage } from './NewsCoverage'
 import { coverageLabel, matchesCoverage, type CoverageFilter } from './coverageModel'
 import {
@@ -59,7 +57,6 @@ type BriefWorkflow = 'pending' | 'saved' | 'done' | 'all'
 type ReportLayout = 'list' | 'board'
 type Theme = 'light' | 'dark'
 type NavigationMode = 'push' | 'replace'
-type ReportSectionKey = EventBriefItem['report_section']
 
 type TimedCacheEntry<T> = {
   value: T
@@ -73,13 +70,6 @@ const briefCache = new Map<string, TimedCacheEntry<NowBrief>>()
 const wireCache = new Map<string, TimedCacheEntry<WireResponse>>()
 const watchesCache = new Map<string, TimedCacheEntry<Watch[]>>()
 const detailCache = new Map<string, TimedCacheEntry<EventDetail>>()
-const REPORT_SECTIONS: Array<{ key: ReportSectionKey; label: string; icon: LucideIcon }> = [
-  { key: 'world', label: '全球与公共事务', icon: Globe2 },
-  { key: 'technology', label: 'AI 与科技', icon: Cpu },
-  { key: 'security', label: '安全与风险', icon: ShieldCheck },
-  { key: 'business', label: '商业与经济', icon: ChartNoAxesCombined },
-  { key: 'general', label: '其他重要变化', icon: Layers3 }
-]
 
 function readTimedCache<T>(cache: Map<string, TimedCacheEntry<T>>, key: string): T | null {
   const entry = cache.get(key)
@@ -141,9 +131,7 @@ function loadSavedEvents(userName: string): EventBriefItem[] {
       && typeof (item as EventBriefItem).title === 'string'
     )).map((item) => ({
       ...item,
-      report_section: REPORT_SECTIONS.some((section) => section.key === item.report_section)
-        ? item.report_section
-        : 'general'
+      report_section: normalizeReportSection(item.report_section)
     }))
   } catch {
     return []
@@ -256,9 +244,10 @@ export function WorldRadar({
     setError(null)
     const path = `/api/v2/brief/now?hours=${reportHours}`
     try {
-      const next = (force ? null : await takePrefetched<NowBrief>(path))
+      const response = (force ? null : await takePrefetched<NowBrief>(path))
         ?? await api<NowBrief>(path, { signal: controller.signal })
       if (controller.signal.aborted) return
+      const next = { ...response, items: response.items.map((item) => ({ ...item, report_section: normalizeReportSection(item.report_section) })) }
       writeTimedCache(briefCache, cacheKey, next)
       setBrief(next)
     } catch (err) {

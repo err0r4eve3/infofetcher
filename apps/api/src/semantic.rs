@@ -1,12 +1,13 @@
 //! 事件层向量召回：新文章按规则自成一簇时，用标题向量在 48 小时窗口内找其他信源的相近报道，
-//! 再由模型确认是否同一事件，确认后挂到对方的簇。只做“召回 + 确认”，不拆分、不合并现有簇。
+//! 再由模型确认是否同一事件，确认后挂到对方的簇。`consolidate_stories` 另按簇中心向量
+//! 合并已成形的同事件簇，同样以模型确认为准；不拆分现有簇。
 //!
 //! 阈值来自 2026-10-14 离线实验（EmbeddingGemma 2、SentenceSimilarity 前缀、只用标题，
 //! 7 天 15,960 篇）：余弦 ≥ 0.90 的跨语言新增配对 88% 是同一事件；同语言 0.90–0.94 只有 60%，
 //! ≥ 0.94 为 96%。向量只负责召回，最终以模型确认为准。
 
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     sync::{LazyLock, Mutex},
 };
 
@@ -33,6 +34,11 @@ const MAX_CANDIDATE_ARTICLES: usize = 20;
 const MAX_CANDIDATE_STORIES: usize = 3;
 const EMBED_BATCH: usize = 32;
 const BACKFILL_LIMIT: i64 = 8_000;
+const MERGE_WINDOW: Duration = Duration::hours(36);
+const MERGE_MIN_COSINE: f32 = 0.88;
+const MERGE_MIN_FEED_QUALITY: i32 = 70;
+const MERGE_CALLS_PER_TURN: usize = 15;
+const MERGE_TITLES_PER_STORY: usize = 3;
 
 struct Entry {
     vector: Vec<f32>,
@@ -486,6 +492,249 @@ async fn embed_and_store(state: &AppState, texts: &[(Uuid, String)]) -> AppResul
     Ok(vectors)
 }
 
+/// 已成形的事件之间互相合并。规则按标题词面聚类，同一事件换个说法的报道
+/// （“法国骚乱”“总理宣布宵禁”“卢浮宫闭馆”）会散成几十个小簇，各自信源数都不够进简报前列。
+/// 这里按簇的标题向量中心找相近的新闻簇，由模型按同事件口径确认后，把小簇并入大簇。
+///
+/// 阈值来自 2026-10-20 离线回放（72 小时 2,268 个新闻簇）：中心余弦 ≥ 0.88 时，
+/// 72 小时约 930 个簇需要确认，约每天 310 次调用；0.87–0.89 区间抽样大多是同一事件的后续。
+/// 判断结果写进 story_link_decisions，同一对簇不重复问。
+pub async fn consolidate_stories(state: &AppState) -> AppResult<usize> {
+    if !enabled(state) {
+        return Ok(0);
+    }
+    ensure_loaded(state).await?;
+    let rows = sqlx::query(
+        "SELECT a.id, a.story_id, a.title, a.published_at, f.title AS source,
+                f.quality_score AS feed_quality
+         FROM articles a
+         JOIN feeds f ON f.id = a.feed_id
+         JOIN story_clusters s ON s.id = a.story_id
+         WHERE s.last_published_at >= now() - $1 * interval '1 hour'
+         ORDER BY COALESCE(a.published_at, a.fetched_at) DESC",
+    )
+    .bind(MERGE_WINDOW.num_hours() as f64)
+    .fetch_all(&state.pool)
+    .await?;
+    let mut stories = HashMap::<Uuid, StoryDraft>::new();
+    {
+        let cache = CACHE.lock().unwrap_or_else(|p| p.into_inner());
+        for row in &rows {
+            let story_id = row.get::<Uuid, _>("story_id");
+            let article_id = row.get::<Uuid, _>("id");
+            let draft = stories.entry(story_id).or_insert_with(|| StoryDraft {
+                id: story_id,
+                ..StoryDraft::default()
+            });
+            draft.articles.push(MemberArticle {
+                id: article_id,
+                title: row.get("title"),
+                source: row.get("source"),
+                published_at: row.get("published_at"),
+            });
+            draft.max_feed_quality = draft.max_feed_quality.max(row.get("feed_quality"));
+            if let Some(entry) = cache.entries.get(&article_id) {
+                draft.add_vector(&entry.vector);
+            }
+        }
+    }
+    let vectors = stories
+        .values()
+        .filter(|story| story.max_feed_quality >= MERGE_MIN_FEED_QUALITY)
+        .filter_map(StoryDraft::story_vector)
+        .collect::<Vec<_>>();
+    let decided = sqlx::query(
+        "SELECT DISTINCT a.story_id, d.candidate_story_id
+         FROM story_link_decisions d
+         JOIN articles a ON a.id = d.article_id
+         WHERE d.created_at >= now() - interval '7 days'
+           AND d.verdict <> 'error' AND a.story_id IS NOT NULL",
+    )
+    .fetch_all(&state.pool)
+    .await?
+    .into_iter()
+    .map(|row| (row.get::<Uuid, _>(0), row.get::<Uuid, _>(1)))
+    .collect::<HashSet<_>>();
+    let plans = plan_merges(&vectors, &decided, MERGE_CALLS_PER_TURN);
+
+    let mut merged = 0;
+    let mut gone = HashSet::<Uuid>::new();
+    for plan in plans {
+        if gone.contains(&plan.story_id) {
+            continue;
+        }
+        let candidates = plan
+            .candidates
+            .iter()
+            .filter(|(id, _)| !gone.contains(id))
+            .filter_map(|(id, cosine)| stories.get(id).map(|story| (story, *cosine)))
+            .collect::<Vec<_>>();
+        let Some(story) = stories.get(&plan.story_id) else {
+            continue;
+        };
+        if candidates.is_empty() {
+            continue;
+        }
+        let report = story.as_candidate("report");
+        let offered = candidates
+            .iter()
+            .enumerate()
+            .map(|(index, (candidate, _))| candidate.as_candidate(&format!("c{}", index + 1)))
+            .collect::<Vec<_>>();
+        let decision = {
+            let _permit = state
+                .llm_semaphore
+                .acquire()
+                .await
+                .map_err(|error| AppError::Anyhow(error.into()))?;
+            llm::match_same_event_with_llm(&state.config, &state.http, &report, &offered).await
+        };
+        let matched = match &decision {
+            Ok(Some(id)) => offered.iter().position(|candidate| &candidate.id == id),
+            _ => None,
+        };
+        for (index, (candidate, cosine)) in candidates.iter().enumerate() {
+            let verdict = match (&decision, matched) {
+                (Err(_), _) => "error",
+                (Ok(_), Some(chosen)) if chosen == index => "linked",
+                _ => "rejected",
+            };
+            sqlx::query(
+                "INSERT INTO story_link_decisions
+                   (article_id, candidate_article_id, candidate_story_id, cosine,
+                    cross_language, verdict, model)
+                 VALUES ($1, $2, $3, $4, false, $5, $6)",
+            )
+            .bind(story.articles[0].id)
+            .bind(candidate.articles[0].id)
+            .bind(candidate.id)
+            .bind(*cosine)
+            .bind(verdict)
+            .bind(format!("{}:story", state.config.embedding_model))
+            .execute(&state.pool)
+            .await?;
+        }
+        if let Err(error) = decision {
+            // 服务商不可达时停止本轮，下一轮再试；其他错误只跳过这个簇。
+            if matches!(error, AppError::Reqwest(_)) {
+                return Err(error);
+            }
+            tracing::warn!(story_id = %story.id, %error, "story consolidation judgement failed");
+            continue;
+        }
+        if let Some(index) = matched {
+            let (target, cosine) = candidates[index];
+            if intelligence::merge_confirmed_stories(state, target.id, story.id).await? {
+                gone.insert(story.id);
+                merged += 1;
+                tracing::info!(winner = %target.id, merged = %story.id, cosine,
+                    "same-event stories merged by semantic consolidation");
+            }
+        }
+    }
+    Ok(merged)
+}
+
+#[derive(Default)]
+struct StoryDraft {
+    id: Uuid,
+    articles: Vec<MemberArticle>,
+    max_feed_quality: i32,
+    vector_sum: Vec<f32>,
+}
+
+struct MemberArticle {
+    id: Uuid,
+    title: String,
+    source: String,
+    published_at: Option<DateTime<Utc>>,
+}
+
+impl StoryDraft {
+    fn add_vector(&mut self, vector: &[f32]) {
+        if self.vector_sum.is_empty() {
+            self.vector_sum = vector.to_vec();
+        } else if self.vector_sum.len() == vector.len() {
+            self.vector_sum
+                .iter_mut()
+                .zip(vector)
+                .for_each(|(sum, value)| *sum += value);
+        }
+    }
+
+    fn story_vector(&self) -> Option<StoryVector> {
+        (!self.vector_sum.is_empty()).then(|| StoryVector {
+            id: self.id,
+            size: self.articles.len(),
+            centroid: normalize(self.vector_sum.clone()),
+        })
+    }
+
+    /// 给模型看的簇：最新的几个不同标题拼在一起，比单个代表标题更能说明这个簇在讲什么。
+    fn as_candidate(&self, id: &str) -> SameEventCandidate {
+        let mut titles = Vec::<&str>::new();
+        for article in &self.articles {
+            if titles.len() == MERGE_TITLES_PER_STORY {
+                break;
+            }
+            if !titles.contains(&article.title.as_str()) {
+                titles.push(&article.title);
+            }
+        }
+        SameEventCandidate {
+            id: id.to_string(),
+            title: titles.join(" ｜ "),
+            source: self.articles[0].source.clone(),
+            published_at: self.articles[0].published_at,
+        }
+    }
+}
+
+struct StoryVector {
+    id: Uuid,
+    size: usize,
+    centroid: Vec<f32>,
+}
+
+#[derive(Debug, PartialEq)]
+struct MergePlan {
+    story_id: Uuid,
+    candidates: Vec<(Uuid, f32)>,
+}
+
+/// 为每个簇找中心余弦达标、规模不小于它的候选（并入方向固定为小并大，同规模按 id 定序），
+/// 跳过已判断过的簇对；按最高余弦从高到低取前 `limit` 个簇，每个最多 3 个候选。
+fn plan_merges(
+    stories: &[StoryVector],
+    decided: &HashSet<(Uuid, Uuid)>,
+    limit: usize,
+) -> Vec<MergePlan> {
+    let mut plans = stories
+        .iter()
+        .filter_map(|story| {
+            let mut candidates = stories
+                .iter()
+                .filter(|other| {
+                    other.id != story.id
+                        && (other.size, other.id) > (story.size, story.id)
+                        && !decided.contains(&(story.id, other.id))
+                })
+                .map(|other| (other.id, dot(&story.centroid, &other.centroid)))
+                .filter(|(_, cosine)| *cosine >= MERGE_MIN_COSINE)
+                .collect::<Vec<_>>();
+            candidates.sort_by(|left, right| right.1.total_cmp(&left.1));
+            candidates.truncate(MAX_CANDIDATE_STORIES);
+            (!candidates.is_empty()).then_some(MergePlan {
+                story_id: story.id,
+                candidates,
+            })
+        })
+        .collect::<Vec<_>>();
+    plans.sort_by(|left, right| right.candidates[0].1.total_cmp(&left.candidates[0].1));
+    plans.truncate(limit);
+    plans
+}
+
 fn embedding_input(title: &str) -> String {
     let title = title.split_whitespace().collect::<Vec<_>>().join(" ");
     format!("{PROMPT_PREFIX}{title}")
@@ -530,6 +779,32 @@ mod tests {
         assert!(!is_cross_language(None, Some("en")));
         assert_eq!(min_cosine(true), 0.90);
         assert_eq!(min_cosine(false), 0.94);
+    }
+
+    #[test]
+    fn merge_plans_point_small_stories_at_larger_similar_ones() {
+        let story = |id: u128, size: usize, vector: Vec<f32>| StoryVector {
+            id: Uuid::from_u128(id),
+            size,
+            centroid: normalize(vector),
+        };
+        let stories = vec![
+            story(1, 12, vec![1.0, 0.0, 0.0]),
+            // 与 1 余弦约 0.96：并入 1
+            story(2, 1, vec![1.0, 0.3, 0.0]),
+            // 与其他簇都不相近
+            story(3, 1, vec![0.0, 0.0, 1.0]),
+            // 与 1 余弦约 0.98，但这对已判断过
+            story(4, 2, vec![1.0, -0.2, 0.0]),
+        ];
+        let decided = HashSet::from([(Uuid::from_u128(4), Uuid::from_u128(1))]);
+        let plans = plan_merges(&stories, &decided, 10);
+        let plan = |id: u128| plans.iter().find(|plan| plan.story_id == Uuid::from_u128(id));
+        assert!(plan(1).is_none(), "the largest story is never merged away");
+        assert!(plan(3).is_none());
+        assert!(plan(4).is_none(), "an already judged pair is not asked again");
+        assert!(plan(2).unwrap().candidates.iter().any(|(id, _)| *id == Uuid::from_u128(1)));
+        assert_eq!(plan_merges(&stories, &decided, 0).len(), 0);
     }
 
     #[test]

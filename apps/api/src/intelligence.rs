@@ -584,6 +584,36 @@ async fn assign_story_cluster_with_preference(
     Ok(story_id)
 }
 
+/// 模型确认同一事件后，把 `merged` 整簇并入 `winner`。任一簇已不存在时不做改动，返回 false。
+pub async fn merge_confirmed_stories(
+    state: &AppState,
+    winner: Uuid,
+    merged: Uuid,
+) -> AppResult<bool> {
+    if winner == merged {
+        return Ok(false);
+    }
+    let mut transaction = state.pool.begin().await?;
+    sqlx::query("SELECT pg_advisory_xact_lock($1)")
+        .bind(STORY_ASSIGNMENT_LOCK_KEY)
+        .fetch_one(&mut *transaction)
+        .await?;
+    let existing = sqlx::query_scalar::<_, i64>(
+        "SELECT count(*) FROM story_clusters WHERE id = ANY($1)",
+    )
+    .bind(vec![winner, merged])
+    .fetch_one(&mut *transaction)
+    .await?;
+    if existing != 2 {
+        return Ok(false);
+    }
+    merge_story_clusters(&mut transaction, winner, &[merged]).await?;
+    refresh_story_cluster(&mut transaction, winner).await?;
+    invalidate_event_digest_for_story(&mut transaction, winner).await?;
+    transaction.commit().await?;
+    Ok(true)
+}
+
 async fn merge_story_clusters(
     transaction: &mut Transaction<'_, Postgres>,
     winner: Uuid,

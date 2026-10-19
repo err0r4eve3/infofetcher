@@ -1,3 +1,5 @@
+import type { ReportSectionKey } from './reportSections'
+
 export type Folder = {
   id: string
   title: string
@@ -244,7 +246,7 @@ export type MonitorRequest = {
 
 export type EventBriefItem = {
   event_id: string
-  report_section: 'world' | 'technology' | 'security' | 'business' | 'general'
+  report_section: ReportSectionKey
   revision_type: 'ADD' | 'UPDATE' | 'CORRECT' | 'CONTRADICT' | 'CONFIRM'
   title: string
   what_happened: string

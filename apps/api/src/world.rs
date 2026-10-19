@@ -961,7 +961,7 @@ fn score_candidate(
         candidate.summary_confidence.as_deref(),
     );
     let community_only = sources_are_community_only(&candidate.source_families);
-    let report_section = report_section(&format!("{} {}", candidate.title, what_happened));
+    let report_section = report_section(&candidate.title, &what_happened);
 
     EventBriefItem {
         event_id: candidate.event_id,
@@ -1111,20 +1111,16 @@ fn selection_score(item: &EventBriefItem, selected: &[EventBriefItem], limit: us
         .fold(0.0_f32, f32::max);
     score -= max_similarity * 22.0;
 
-    let topic = topic_bucket(&format!("{} {}", item.title, item.what_happened));
+    let topic = item.report_section.as_str();
     let topic_count = selected
         .iter()
-        .filter(|selected_item| {
-            topic_bucket(&format!(
-                "{} {}",
-                selected_item.title, selected_item.what_happened
-            )) == topic
-        })
+        .filter(|selected_item| selected_item.report_section == topic)
         .count();
+    // 栏目已细分，软上限按期数放宽；硬上限另由 section_shares 控制。
     let topic_cap = if topic == "general" {
         (limit / 3).max(2)
     } else {
-        2
+        (limit / 10).max(2)
     };
     if topic_count >= topic_cap {
         score -= ((topic_count - topic_cap + 1) as f32) * 10.0;
@@ -1135,7 +1131,9 @@ fn selection_score(item: &EventBriefItem, selected: &[EventBriefItem], limit: us
         .iter()
         .map(|source| source.trim().to_lowercase())
         .collect::<HashSet<_>>();
-    if !normalized_sources.is_empty() {
+    // 来源重复扣分只针对一两个来源撑起的条目，防止同一信源刷屏。
+    // 多源事件和已选条目共享大通讯社是常态，按重复扣分会把最重要的事件压到单源快讯后面。
+    if !normalized_sources.is_empty() && normalized_sources.len() <= 2 {
         let repeat_counts = normalized_sources
             .iter()
             .map(|source| {
@@ -1180,7 +1178,7 @@ fn brief_title_similarity(left: &str, right: &str) -> f32 {
 fn preference_delta(candidate: &Candidate, preferences: &[PreferenceSignal]) -> i32 {
     let mut strongest_positive = 0;
     let mut strongest_negative = 0;
-    let candidate_topic = topic_bucket(&format!("{} {}", candidate.title, candidate.excerpt));
+    let candidate_topic = report_section(&candidate.title, &candidate.excerpt);
     for signal in preferences {
         if signal.event_id == candidate.event_id {
             continue;
@@ -1189,7 +1187,7 @@ fn preference_delta(candidate: &Candidate, preferences: &[PreferenceSignal]) -> 
         if title_similarity <= 0.0 {
             continue;
         }
-        let same_topic = topic_bucket(&signal.title) == candidate_topic;
+        let same_topic = report_section(&signal.title, "") == candidate_topic;
         let similarity =
             (title_similarity * 0.85 + if same_topic { 0.15 } else { 0.0 }).clamp(0.0, 1.0);
         let adjustment = match signal.kind.as_str() {
@@ -1466,69 +1464,194 @@ fn confidence_label(score: i32, sources: i32, summary_confidence: Option<&str>) 
     }
 }
 
-fn topic_bucket(title: &str) -> &'static str {
+/// 报告栏目，顺序即展示顺序，也是同分时的优先顺序。前端和日报使用同一组键。
+pub(crate) const REPORT_SECTIONS: &[(&str, &str)] = &[
+    ("conflict", "战争与冲突"),
+    ("politics", "政治与外交"),
+    ("society", "社会与民生"),
+    ("disaster", "灾害与事故"),
+    ("economy", "宏观与市场"),
+    ("business", "公司与产业"),
+    ("ai", "AI"),
+    ("tech", "科技与产品"),
+    ("cyber", "网络安全"),
+    ("science", "科学与健康"),
+    ("crypto", "加密资产"),
+    ("culture", "文化与体育"),
+    ("general", "其他"),
+];
+
+/// 各栏目的信号词。英文按词匹配并接受常见词尾（riots、rioting、curfews），中文按子串匹配。
+/// 词有歧义时宁可不收：例如 gas（催泪瓦斯）、who（疑问词）、币（人民币）。
+const SECTION_MARKERS: &[(&str, &[&str])] = &[
+    ("conflict", &[
+        "war", "warfare", "airstrike", "missile", "drone", "troop", "military", "army",
+        "soldier", "ceasefire", "truce", "shelling", "invasion", "invade", "offensive",
+        "militant", "hamas", "hezbollah", "houthi", "idf", "nato", "gaza", "frontline",
+        "combat", "bombing", "artillery", "insurgent", "rebel", "weapon", "strike", "attack",
+        "defence", "defense",
+        "战争", "战事", "空袭", "袭击", "导弹", "无人机", "军事", "军方", "部队", "士兵", "停火",
+        "炮击", "入侵", "武装", "前线", "交火", "轰炸", "胡塞", "哈马斯", "真主党", "北约", "加沙",
+        "以军", "俄军", "乌军",
+    ]),
+    ("politics", &[
+        "election", "vote", "voting", "voter", "ballot", "parliament", "president",
+        "presidential", "prime", "minister", "government", "cabinet", "diplomat", "diplomatic",
+        "diplomacy", "summit", "sanction", "senate", "congress", "lawmaker", "legislation",
+        "court", "judge", "ruling", "supreme", "kremlin", "trump", "putin", "zelensky",
+        "macron", "netanyahu", "republican", "democrat", "opposition", "coup", "referendum",
+        "treaty", "ambassador", "envoy", "party", "mayor", "governor", "midterm",
+        "brexit", "eu", "governance",
+        "选举", "大选", "投票", "议会", "国会", "总统", "总理", "首相", "政府", "内阁", "外交",
+        "峰会", "制裁", "部长", "法院", "裁决", "政党", "公投", "条约", "大使", "特使", "白宫",
+        "克里姆林宫", "特朗普", "普京", "泽连斯基", "马克龙", "内塔尼亚胡", "欧盟", "联合国",
+        "外长", "会晤", "谈判", "市长", "州长", "中期选举",
+    ]),
+    ("society", &[
+        "protest", "protester", "riot", "rioter", "unrest", "curfew", "loot", "demonstration",
+        "demonstrator", "walkout", "migrant", "migration", "immigration", "refugee", "asylum",
+        "crime", "shooting", "shooter", "gunman", "police", "arrest", "prison", "hunger",
+        "famine", "humanitarian", "aid", "poverty", "school", "student", "teacher",
+        "education", "housing", "homeless", "welfare", "pension", "wage", "abortion",
+        "racism", "discrimination", "vandalism", "violence", "violent", "stabbing", "accused",
+        "抗议", "示威", "骚乱", "暴乱", "暴力", "宵禁", "游行", "罢工", "洗劫", "抢劫", "移民",
+        "难民", "庇护", "犯罪", "枪击", "警方", "警察", "逮捕", "被捕", "拘留", "监狱", "饥荒",
+        "饥饿", "人道", "援助", "贫困", "学生", "学校", "教育", "住房", "民生", "养老", "工资",
+        "老龄化", "社会",
+    ]),
+    ("disaster", &[
+        "earthquake", "quake", "flood", "wildfire", "fire", "blaze", "hurricane", "typhoon",
+        "cyclone", "storm", "tornado", "crash", "explosion", "blast", "collapse", "derail",
+        "landslide", "tsunami", "volcano", "eruption", "drought", "heatwave", "accident",
+        "wreck", "rescue", "evacuate", "evacuation",
+        "地震", "洪水", "洪灾", "山火", "火灾", "大火", "起火", "台风", "飓风", "风暴", "暴雨",
+        "坠毁", "空难", "爆炸", "坍塌", "倒塌", "事故", "海啸", "火山", "干旱", "热浪", "救援",
+        "撤离", "遇难", "失事", "迫降",
+    ]),
+    ("economy", &[
+        "economy", "economic", "gdp", "inflation", "rate", "interest", "fed", "ecb", "boj",
+        "pboc", "bank", "bond", "yield", "treasury", "stock", "equity", "market", "tariff",
+        "oil", "crude", "diesel", "fuel", "opec", "gold", "currency", "euro", "dollar", "yuan",
+        "yen", "recession", "job", "unemployment", "payroll", "debt", "deficit", "budget",
+        "trade", "export", "import", "cpi", "investor", "selloff", "tax", "surplus",
+        "economist",
+        "经济", "通胀", "利率", "央行", "美联储", "加息", "降息", "国债", "收益率", "股市", "股票",
+        "美股", "港股", "市场", "关税", "原油", "石油", "油价", "柴油", "燃油", "黄金", "汇率",
+        "人民币", "美元", "衰退", "就业", "失业", "债务", "赤字", "预算", "贸易", "出口", "进口",
+        "增速", "投资者", "抛售", "国内生产总值", "房价", "税",
+    ]),
+    ("business", &[
+        "company", "earnings", "revenue", "profit", "ipo", "acquisition", "acquire", "merger",
+        "ceo", "layoff", "startup", "funding", "valuation", "investment", "retailer", "retail",
+        "brand", "shareholder", "share", "factory", "automaker", "airline", "lawsuit",
+        "antitrust",
+        "公司", "企业", "财报", "营收", "利润", "收购", "并购", "上市", "裁员", "融资", "估值",
+        "股东", "品牌", "零售", "工厂", "车企", "航空", "诉讼", "反垄断",
+    ]),
+    ("ai", &[
+        "ai", "llm", "gpt", "chatgpt", "openai", "anthropic", "claude", "gemini", "deepseek",
+        "qwen", "kimi", "minimax", "mistral", "llama", "copilot", "agent", "model", "inference",
+        "deepmind", "neural", "chatbot", "agi",
+        "人工智能", "大模型", "模型", "智能体", "机器学习", "算力",
+    ]),
+    ("tech", &[
+        "tech", "technology", "software", "chip", "semiconductor", "nvidia", "apple", "google",
+        "microsoft", "meta", "amazon", "iphone", "ipad", "mac", "android", "linux", "kernel",
+        "app", "smartphone", "robot", "robotics", "tesla", "spacex", "starlink", "satellite",
+        "browser", "github", "rust", "python", "javascript", "npm", "cloud", "datacenter", "gpu",
+        "cpu", "headset", "firmware",
+        "科技", "芯片", "半导体", "软件", "苹果", "谷歌", "微软", "英伟达", "手机", "内核", "机器人",
+        "特斯拉", "电动车", "卫星", "星链", "开源", "浏览器", "数据中心", "华为", "小米",
+    ]),
+    ("cyber", &[
+        "vulnerability", "cve", "exploit", "breach", "hack", "hacker", "malware", "ransomware",
+        "phishing", "cyber", "cyberattack", "cybersecurity", "ddos", "advisory", "zeroday",
+        "spyware", "backdoor",
+        "漏洞", "黑客", "勒索", "网络攻击", "数据泄露", "恶意软件", "钓鱼", "网络安全", "后门",
+        "间谍软件",
+    ]),
+    ("science", &[
+        "study", "research", "researcher", "scientist", "science", "physics", "math",
+        "mathematics", "hypothesis", "theorem", "astronomy", "space", "nasa", "telescope",
+        "climate", "emission", "health", "disease", "vaccine", "virus", "outbreak", "ebola",
+        "cancer", "drug", "fda", "medical", "hospital", "patient", "gene", "genome", "protein",
+        "species", "fossil", "nhs", "evolution",
+        "研究", "科学家", "科学", "物理", "数学", "猜想", "天文", "太空", "航天", "气候", "排放",
+        "健康", "疾病", "疫苗", "病毒", "疫情", "埃博拉", "癌症", "药物", "医疗", "医院", "患者",
+        "基因", "蛋白", "物种", "论文",
+    ]),
+    ("crypto", &[
+        "bitcoin", "btc", "ethereum", "eth", "crypto", "cryptocurrency", "stablecoin", "defi",
+        "token", "solana", "coinbase", "binance", "blockchain", "onchain", "nft", "whale",
+        "airdrop", "memecoin", "xrp", "usdt", "usdc", "tether", "saylor",
+        "比特币", "以太坊", "加密", "稳定币", "代币", "区块链", "币安", "链上", "巨鲸", "空投",
+    ]),
+    ("culture", &[
+        "football", "soccer", "nba", "wnba", "nfl", "mlb", "nhl", "league", "championship",
+        "tournament", "olympic", "olympics", "coach", "player", "athlete", "goal", "cricket",
+        "tennis", "rugby", "film", "movie", "cinema", "music", "album", "singer", "actor",
+        "actress", "celebrity", "museum", "painting", "exhibition", "festival", "novel",
+        "theatre", "theater", "concert", "artist", "culture", "cultural", "fashion",
+        "足球", "篮球", "体育", "联赛", "冠军", "奥运", "球员", "电影", "音乐", "歌手", "演员",
+        "明星", "博物馆", "艺术", "展览", "文化", "小说", "演唱会", "综艺", "游戏",
+    ]),
+];
+
+/// 按信号词计分选栏目：标题命中记 2 分，正文（摘要）命中记 1 分，同一个词只算一次。
+/// 不再按“第一个命中”选，避免“总理宣布宵禁以遏制骚乱”因为先命中 government 一类词而分错。
+fn report_section(title: &str, body: &str) -> &'static str {
     let title = title.to_lowercase();
-    if [
-        "ai",
-        "tech",
-        "technology",
-        "software",
-        "chip",
-        "人工智能",
-        "科技",
-        "芯片",
-    ]
-    .iter()
-    .any(|marker| contains_signal_marker(&title, marker))
-    {
-        "technology"
-    } else if [
-        "market", "economy", "business", "bank", "rates", "经济", "市场", "公司", "央行",
-    ]
-    .iter()
-    .any(|marker| contains_signal_marker(&title, marker))
-    {
-        "business"
-    } else if [
-        "security",
-        "vulnerability",
-        "breach",
-        "安全",
-        "漏洞",
-        "攻击",
-    ]
-    .iter()
-    .any(|marker| contains_signal_marker(&title, marker))
-    {
-        "security"
-    } else if [
-        "war",
-        "strike",
-        "strikes",
-        "attack",
-        "attacks",
-        "military",
-        "election",
-        "government",
-        "战争",
-        "空袭",
-        "袭击",
-        "军事",
-        "选举",
-        "政府",
-        "外交",
-    ]
-    .iter()
-    .any(|marker| contains_signal_marker(&title, marker))
-    {
-        "world"
-    } else {
-        "general"
+    let body = body.to_lowercase();
+    let title_tokens = ascii_tokens(&title);
+    let body_tokens = ascii_tokens(&body);
+    let mut best = ("general", 0);
+    for (section, markers) in SECTION_MARKERS {
+        let score = markers
+            .iter()
+            .map(|marker| {
+                if section_marker_hit(&title, &title_tokens, marker) {
+                    2
+                } else if section_marker_hit(&body, &body_tokens, marker) {
+                    1
+                } else {
+                    0
+                }
+            })
+            .sum::<i32>();
+        if score > best.1 {
+            best = (section, score);
+        }
     }
+    best.0
 }
 
-fn report_section(title: &str) -> &'static str {
-    topic_bucket(title)
+fn ascii_tokens(text: &str) -> Vec<&str> {
+    text.split(|character: char| !character.is_ascii_alphanumeric())
+        .filter(|token| !token.is_empty())
+        .collect()
+}
+
+fn section_marker_hit(text: &str, tokens: &[&str], marker: &str) -> bool {
+    if !marker.is_ascii() {
+        return text.contains(marker);
+    }
+    tokens.iter().any(|token| marker_inflection(token, marker))
+}
+
+/// 词尾宽松匹配：riot → riots / rioting / rioters，invade → invaded。
+/// 三个字母以内的词（ai、aid、fed）只做整词匹配，避免 ai 命中 aid。
+fn marker_inflection(token: &str, marker: &str) -> bool {
+    if token == marker {
+        return true;
+    }
+    if marker.len() <= 3 {
+        return false;
+    }
+    let Some(suffix) = token.strip_prefix(marker) else {
+        return false;
+    };
+    matches!(suffix, "s" | "es" | "ed" | "ing" | "er" | "ers")
+        || (marker.ends_with('e') && matches!(suffix, "d" | "r" | "rs"))
 }
 
 pub async fn record_event_revision(
@@ -1721,9 +1844,9 @@ fn normalize_report_hours(hours: i64) -> i64 {
 
 fn report_limit(hours: i64) -> usize {
     if normalize_report_hours(hours) == 12 {
-        30
+        60
     } else {
-        48
+        90
     }
 }
 
@@ -1785,7 +1908,7 @@ mod tests {
     ) -> EventBriefItem {
         EventBriefItem {
             event_id: Uuid::new_v4(),
-            report_section: report_section(title).to_string(),
+            report_section: report_section(title, title).to_string(),
             revision_type: "ADD".to_string(),
             title: title.to_string(),
             what_happened: title.to_string(),
@@ -1840,17 +1963,36 @@ mod tests {
         assert_eq!(normalize_report_hours(12), 12);
         assert_eq!(normalize_report_hours(18), 24);
         assert_eq!(normalize_report_hours(72), 24);
-        assert_eq!(report_limit(12), 30);
-        assert_eq!(report_limit(24), 48);
+        assert_eq!(report_limit(12), 60);
+        assert_eq!(report_limit(24), 90);
     }
 
     #[test]
     fn report_sections_have_stable_user_facing_labels() {
-        assert_eq!(report_section("AI chip rules changed"), "technology");
-        assert_eq!(report_section("Election date confirmed"), "world");
-        assert_eq!(report_section("Major vulnerability disclosed"), "security");
-        assert_eq!(report_section("Central bank changes rates"), "business");
-        assert_eq!(report_section("A notable cultural event"), "general");
+        let section = |title: &str| report_section(title, "");
+        assert_eq!(section("Election date confirmed"), "politics");
+        assert_eq!(section("Major vulnerability disclosed"), "cyber");
+        assert_eq!(section("Central bank changes rates"), "economy");
+        assert_eq!(section("Something unusual happened today"), "general");
+        assert_eq!(section("OpenAI ships a new reasoning model"), "ai");
+        assert_eq!(section("Nvidia unveils new GPU for gaming laptops"), "tech");
+        assert_eq!(section("Houthi drone attack hits Saudi airport"), "conflict");
+        assert_eq!(section("Strong earthquake strikes off Japan coast, tsunami warning issued"), "disaster");
+        assert_eq!(section("Bitcoin slips 2% as ETF outflows continue"), "crypto");
+        assert_eq!(section("New Ebola outbreak confirmed in Congo"), "science");
+        assert_eq!(section("Retailer cuts 3,000 jobs after weak earnings"), "business");
+        // 2026-10-19 法国骚乱：总理、宵禁、骚乱同时出现时归社会民生，不再落入“其他”。
+        assert_eq!(
+            section("French prime minister calls for limited curfews to curb rioting and looting"),
+            "society"
+        );
+        assert_eq!(section("法国暴力骚乱持续蔓延 总理勒科尔尼：必要时宣布紧急状态"), "society");
+        assert_eq!(section("France protests escalate with riots, looting and 2,400 arrests"), "society");
+        // 正文补充信号：标题看不出栏目时按摘要判断。
+        assert_eq!(report_section("What happens now?", "数学家用 AI 证明了一个猜想"), "science");
+        // 短词只做整词匹配：aid 不命中 ai。
+        assert_eq!(section("WFP announces food aid cuts amid hunger"), "society");
+        assert_eq!(section("Arsenal beat Forest as Premier League title race tightens"), "culture");
     }
 
     #[test]
@@ -1920,8 +2062,8 @@ mod tests {
     #[test]
     fn impact_signals_do_not_treat_ai_as_an_arbitrary_substring() {
         assert_eq!(impact_signal("Chair said plans remain unchanged", ""), 44);
-        assert_eq!(topic_bucket("Chair said plans remain unchanged"), "general");
-        assert_eq!(topic_bucket("New AI chip rules announced"), "technology");
+        assert_eq!(report_section("Chair said plans remain unchanged", ""), "general");
+        assert_eq!(report_section("New AI model rules announced", ""), "ai");
         assert!(
             impact_signal("Military strikes close a major shipping route", "")
                 > impact_signal("Championship final preview", "")
@@ -2000,10 +2142,10 @@ mod tests {
                 test_brief_item(titles[index], 70 - index as i32, 70, 70, 70, 2, &format!("Tech {index}"))
             }))
             .collect::<Vec<_>>();
-        let shares = HashMap::from([("world".to_string(), 0.4)]);
+        let shares = HashMap::from([("conflict".to_string(), 0.4)]);
         let selected = select_diverse(items, 6, &shares);
-        let world = selected.iter().filter(|item| item.report_section == "world").count();
-        assert_eq!(world, 3, "ceil(6 * 0.4) world items");
+        let conflict = selected.iter().filter(|item| item.report_section == "conflict").count();
+        assert_eq!(conflict, 3, "ceil(6 * 0.4) conflict items");
         assert_eq!(selected.len(), 6);
     }
 

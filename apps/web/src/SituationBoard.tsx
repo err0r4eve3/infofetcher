@@ -1,20 +1,16 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { ArrowRight, Bell, ChartNoAxesCombined, Cpu, FileText, Globe2, Layers3, LayoutGrid, Search, ShieldCheck, X } from 'lucide-react'
+import { ArrowRight, Bell, FileText, LayoutGrid, Search, X } from 'lucide-react'
 import type { EventBriefItem, NowBrief } from './api'
 import { formatDate, watchDisplayName } from './api'
 import { isCorrection, readHiddenPanels, SITUATION_PANELS, situationPanelItems, type SituationPanel, type SituationTopic } from './situation'
 import './situation.css'
 import { ReportFilterControls } from './ReportFilterControls'
 import { EMPTY_REPORT_FILTERS, filterReportItems, hasReportFilters, type ReportFilters } from './reportFilters'
+import { REPORT_SECTIONS } from './reportSections'
 
-const TOPICS = [
-  { key: 'all', label: '全部', icon: LayoutGrid },
-  { key: 'world', label: '全球', icon: Globe2 },
-  { key: 'technology', label: '科技', icon: Cpu },
-  { key: 'security', label: '安全', icon: ShieldCheck },
-  { key: 'business', label: '商业', icon: ChartNoAxesCombined },
-  { key: 'general', label: '其他', icon: Layers3 }
-] as const
+const TOPICS = [{ key: 'all', label: '全部', icon: LayoutGrid }, ...REPORT_SECTIONS] as const
+// 重点和最近面板默认多露几条，其余面板只作提醒。
+const PANEL_LIMITS: Record<SituationPanel, number> = { priority: 12, recent: 12, corrections: 5, watches: 5 }
 const REVISIONS = { ADD: '新增', UPDATE: '更新', CONFIRM: '确认', CORRECT: '纠正', CONTRADICT: '分歧' }
 
 export function SituationBoard({ brief, userName, filters, onFiltersChange, onOpenEvent }: {
@@ -58,10 +54,12 @@ export function SituationBoard({ brief, userName, filters, onFiltersChange, onOp
     <aside className="situation-topics">
       <h2>主题</h2>
       <nav aria-label="态势主题">
-        {TOPICS.map(({ key, label, icon: Icon }) => <button type="button" key={key} aria-pressed={topic === key} onClick={() => setTopic(key)}>
-          <Icon size={18} aria-hidden="true" /><span>{label}</span>
-          <span>{key === 'all' ? searched.length : searched.filter((item) => item.report_section === key).length}</span>
-        </button>)}
+        {TOPICS.map(({ key, label, icon: Icon }) => {
+          const count = key === 'all' ? searched.length : searched.filter((item) => item.report_section === key).length
+          return (count > 0 || key === 'all' || topic === key) && <button type="button" key={key} aria-pressed={topic === key} onClick={() => setTopic(key)}>
+            <Icon size={16} aria-hidden="true" /><span>{label}</span><span>{count}</span>
+          </button>
+        })}
       </nav>
       <div className="situation-scope"><FileText size={16} aria-hidden="true" /><strong>本期报告</strong><span>近 {brief.window_hours} 小时</span></div>
     </aside>
@@ -69,6 +67,9 @@ export function SituationBoard({ brief, userName, filters, onFiltersChange, onOp
       <div className="situation-overview">
         <header className="situation-toolbar">
           <h2>态势</h2>
+          <dl className="situation-stats" aria-label="当前筛选统计">
+            {stats.map(({ label, count }) => <div key={label}><dt>{label}</dt><dd>{count}</dd></div>)}
+          </dl>
           <details className="situation-settings" ref={settingsRef} onKeyDown={(event) => {
             if (event.key === 'Escape') { event.currentTarget.open = false; event.currentTarget.querySelector('summary')?.focus() }
           }} onBlur={(event) => {
@@ -85,9 +86,6 @@ export function SituationBoard({ brief, userName, filters, onFiltersChange, onOp
           </details>
         </header>
         <ReportFilterControls items={brief.items} value={filters} onChange={onFiltersChange} />
-        <dl className="situation-stats" aria-label="当前筛选统计">
-          {stats.map(({ label, count }) => <div key={label}><dt>{label}</dt><dd>{count}</dd></div>)}
-        </dl>
       </div>
       <div className="situation-scope-note" role="status">
         <span>本期报告内统计 · {filtered.length} / {brief.items.length} 项</span>
@@ -117,7 +115,7 @@ function SignalPanel({ panel, label, items, onHide, onOpenEvent }: {
   onOpenEvent: (id: string) => void
 }) {
   const [expanded, setExpanded] = useState(false)
-  const limit = panel === 'priority' || panel === 'recent' ? 4 : 2
+  const limit = PANEL_LIMITS[panel]
   const visible = expanded ? items : items.slice(0, limit)
   return <section className={`situation-panel situation-panel-${panel}`} aria-labelledby={`situation-${panel}`}>
     <header><h3 id={`situation-${panel}`}>{label}</h3><span>{items.length}</span><button type="button" aria-label={`隐藏${label}`} title={`隐藏${label}`} onClick={onHide}><X size={15} aria-hidden="true" /></button></header>
@@ -129,10 +127,12 @@ function SignalPanel({ panel, label, items, onHide, onOpenEvent }: {
               : <time dateTime={item.published_at} title={formatDate(item.published_at)}>{new Date(item.published_at).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}</time>}
           <span className="situation-event-body">
             <strong>{item.title}</strong>
-            <span className="situation-excerpt">{panel === 'watches' ? `命中关注：${item.watch_names.map(watchDisplayName).join('、') || '已匹配关注规则'}` : panel === 'priority' ? item.what_happened : item.why_now}</span>
+            {panel === 'priority' && <span className="situation-excerpt">{item.what_happened}</span>}
+            {panel === 'watches' && <span className="situation-excerpt">命中关注：{item.watch_names.map(watchDisplayName).join('、') || '已匹配关注规则'}</span>}
             <span className="situation-event-meta">
               <span className={`situation-revision type-${item.revision_type}${isCorrection(item) ? ' correction' : ''}`}>{REVISIONS[item.revision_type]}</span>
-              {panel === 'priority' ? <span>{item.independent_source_count} 个去重订阅源 · {item.source_titles.slice(0, 3).join(' / ') || '来源待补全'}</span> : <span>{item.source_titles[0] || '来源待补全'}</span>}
+              {item.independent_source_count >= 2 && <span>{item.independent_source_count} 源</span>}
+              <span className="situation-event-sources">{item.source_titles.slice(0, panel === 'priority' ? 3 : 1).join(' / ') || '来源待补全'}</span>
             </span>
           </span>
           <ArrowRight size={15} aria-hidden="true" />

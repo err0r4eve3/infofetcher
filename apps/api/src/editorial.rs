@@ -76,6 +76,12 @@ pub fn spawn(state: AppState) {
                     tracing::warn!("editorial leader connection lost");
                     break;
                 }
+                // 先合并同事件簇，评审名额不浪费在即将并掉的碎片上。
+                match crate::semantic::consolidate_stories(&state).await {
+                    Ok(0) => {}
+                    Ok(merged) => tracing::info!(merged, "story consolidation finished"),
+                    Err(error) => tracing::warn!(%error, "story consolidation failed"),
+                }
                 if state.config.editorial.enabled
                     && let Err(error) = assess::run_turn(&state).await
                 {

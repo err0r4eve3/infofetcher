@@ -20,13 +20,17 @@ pub const MAX_ITEMS: usize = 20;
 pub const FEED_EDITIONS: i64 = 30;
 const PUSH_ITEMS: usize = 10;
 
-const SECTIONS: &[(&str, &str)] = &[
-    ("world", "全球与公共事务"),
-    ("technology", "AI 与科技"),
-    ("security", "安全与风险"),
-    ("business", "商业与经济"),
-    ("general", "其他重要变化"),
-];
+use crate::world::REPORT_SECTIONS as SECTIONS;
+
+/// 2026-10-20 栏目细分前的旧键，旧日报按它们归到新栏目。
+fn current_section(key: &str) -> &str {
+    match key {
+        "world" => "politics",
+        "technology" => "tech",
+        "security" => "cyber",
+        other => other,
+    }
+}
 
 /// 一期日报里的一条，独立于简报结构保存，旧日报不受接口字段变化影响。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -196,10 +200,11 @@ pub fn event_url(public_url: &str, event_id: Uuid) -> String {
 }
 
 fn section_label(key: &str) -> &'static str {
+    let key = current_section(key);
     SECTIONS
         .iter()
         .find(|(section, _)| *section == key)
-        .map_or("其他重要变化", |(_, label)| label)
+        .map_or("其他", |(_, label)| label)
 }
 
 /// 按固定栏目顺序分组的条目。
@@ -212,9 +217,9 @@ fn grouped(items: &[EditionItem]) -> Vec<(&'static str, Vec<&EditionItem>)> {
                 items
                     .iter()
                     .filter(|item| {
-                        item.section == *key
-                            || (*key == "general"
-                                && !SECTIONS.iter().any(|(k, _)| *k == item.section))
+                        let section = current_section(&item.section);
+                        section == *key
+                            || (*key == "general" && !SECTIONS.iter().any(|(k, _)| *k == section))
                     })
                     .collect::<Vec<_>>(),
             )
@@ -462,9 +467,11 @@ mod tests {
     #[test]
     fn markdown_groups_by_section_in_fixed_order() {
         let items = vec![
-            item("technology", "芯片 [新规]"),
-            item("world", "停火协议"),
+            item("tech", "芯片 [新规]"),
+            item("conflict", "停火协议"),
             item("unknown", "其他"),
+            // 旧日报里的旧键归到新栏目。
+            item("world", "议会投票"),
         ];
         let markdown = render_markdown(
             NaiveDate::from_ymd_opt(2026, 10, 16).unwrap(),
@@ -472,11 +479,12 @@ mod tests {
             120,
             "https://x.test/",
         );
-        let world = markdown.find("## 全球与公共事务").unwrap();
-        let tech = markdown.find("## AI 与科技").unwrap();
-        let other = markdown.find("## 其他重要变化").unwrap();
-        assert!(world < tech && tech < other);
-        assert!(markdown.starts_with("# 信息简报 · 2026-10-16\n\n从 120 个事件中选出 3 条。"));
+        let conflict = markdown.find("## 战争与冲突").unwrap();
+        let politics = markdown.find("## 政治与外交").unwrap();
+        let tech = markdown.find("## 科技与产品").unwrap();
+        let other = markdown.find("## 其他").unwrap();
+        assert!(conflict < politics && politics < tech && tech < other);
+        assert!(markdown.starts_with("# 信息简报 · 2026-10-16\n\n从 120 个事件中选出 4 条。"));
         assert!(markdown.contains(
             "### [芯片 \\[新规\\]](https://x.test/?event=00000000-0000-0000-0000-000000000000)"
         ));
@@ -537,7 +545,7 @@ mod tests {
         };
         let text = push_text(&edition, "https://x.test");
         assert!(text.starts_with("信息简报 · 2026-10-16（12 条）"));
-        assert!(text.contains("10. [全球与公共事务] 事件 9"));
+        assert!(text.contains("10. [政治与外交] 事件 9"), "legacy world key maps to politics");
         assert!(!text.contains("事件 10\n"));
         assert!(text.ends_with("另有 2 条见完整简报。"));
     }

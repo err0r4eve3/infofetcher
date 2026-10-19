@@ -166,7 +166,7 @@ impl EditorialConfig {
 
 const DEFAULT_EDITORIAL_THRESHOLDS: &str = "world-news:5,tech-research:5,long-read:5";
 const DEFAULT_BRIEF_SECTION_SHARES: &str =
-    "world:0.45,technology:0.3,business:0.3,security:0.2,general:0.25";
+    "conflict:0.25,politics:0.25,society:0.2,disaster:0.15,economy:0.2,business:0.15,ai:0.2,tech:0.2,cyber:0.1,science:0.15,crypto:0.1,culture:0.1,general:0.15";
 
 /// 解析 `key:number,key:number`；格式错误的项直接忽略。
 fn parse_number_map(raw: &str) -> HashMap<String, f32> {
