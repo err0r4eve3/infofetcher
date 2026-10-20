@@ -26,6 +26,8 @@ use evidence::{EventEvidence, EvidenceScope};
 /// 原上限 2,000 按最近更新截断，把 17 小时以前的事件全部挡在报告外。
 const MAX_CANDIDATES: i64 = 5_000;
 const MIN_BRIEF_SCORE: i32 = 60;
+/// 同一信源靠单源条目刷屏时的扣分上限：五条之后不再加码，交给栏目上限和评审分。
+const MAX_SOURCE_REPEAT_PENALTY: f32 = 30.0;
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -1269,22 +1271,25 @@ fn selection_score_with(
     // 来源重复扣分只针对一两个来源撑起的条目，防止同一信源刷屏。
     // 多源事件和已选条目共享大通讯社是常态，按重复扣分会把最重要的事件压到单源快讯后面。
     if !normalized_sources.is_empty() && normalized_sources.len() <= 2 {
+        // 只数同样靠一两个来源入选的条目：大媒体出现在几十个多源事件里是常态，
+        // 原先连它们一起数且不封顶，BBC、联合早报的单源报道被扣到 −120 分（2026-10-20 explain-brief）。
         let repeat_counts = normalized_sources
             .iter()
             .map(|source| {
                 selected
                     .iter()
                     .filter(|selected_item| {
-                        selected_item.source_families.iter().any(|selected_source| {
-                            selected_source.trim().eq_ignore_ascii_case(source)
-                        })
+                        selected_item.source_families.len() <= 2
+                            && selected_item.source_families.iter().any(|selected_source| {
+                                selected_source.trim().eq_ignore_ascii_case(source)
+                            })
                     })
                     .count()
             })
             .collect::<Vec<_>>();
         let repeated = repeat_counts.iter().filter(|count| **count > 0).count();
         let max_repeat = repeat_counts.into_iter().max().unwrap_or_default();
-        score -= max_repeat as f32 * 6.0;
+        score -= (max_repeat as f32 * 6.0).min(MAX_SOURCE_REPEAT_PENALTY);
         score -= repeated as f32 / normalized_sources.len() as f32 * 8.0;
     }
     score
@@ -2417,7 +2422,15 @@ mod tests {
             repeated
         );
         candidate.source_families = vec!["another.example".into()];
-        assert!(selection_score(&candidate, &[selected], 12) > repeated);
+        assert!(selection_score(&candidate, &[selected.clone()], 12) > repeated);
+        // 来源只出现在多源条目里不算刷屏；单源刷屏扣分有上限。
+        let mut multi = selected.clone();
+        multi.source_families = vec!["bbc.co.uk".into(), "apnews.com".into(), "reuters.com".into()];
+        candidate.source_families = vec!["bbc.co.uk".into()];
+        let alone = selection_score(&candidate, &[], 12);
+        assert_eq!(selection_score(&candidate, &[multi.clone(), multi.clone()], 12), alone);
+        let flood = vec![selected; 20];
+        assert!(selection_score(&candidate, &flood, 12) >= alone - MAX_SOURCE_REPEAT_PENALTY - 8.0 - 40.0);
         assert!(
             serde_json::to_value(candidate)
                 .unwrap()
