@@ -928,9 +928,11 @@ fn score_candidate(
     };
     relevance += preference_delta(&candidate, preferences);
     relevance = relevance.clamp(0, 100);
-    let total = (impact as f32 * 0.28
+    // 影响分来自评审时更可信，权重从 0.28 提到 0.36，时效从 0.18 降到 0.10。
+    // 2026-10-20 回放 650 个已评审事件：入选平均评审分 6.28→6.52，≤5.5 分条目 31→17。
+    let total = (impact as f32 * 0.36
         + novelty.clamp(0, 100) as f32 * 0.20
-        + urgency.clamp(0, 100) as f32 * 0.18
+        + urgency.clamp(0, 100) as f32 * 0.10
         + confidence as f32 * 0.19
         + relevance as f32 * 0.15)
         .round() as i32;
@@ -1455,7 +1457,9 @@ fn change_novelty_score(revision_type: &str, article_count: i32, updates: i32) -
 }
 
 fn freshness_score(age_hours: f32, updates: i32, revision_type: &str) -> i32 {
-    let continuous_decay = 100.0 * 2.0_f32.powf(-age_hours.max(0.0) / 12.0);
+    // 半衰期等于全天报告的窗口：12 小时半衰期时，18 小时前的多源大事（7.8 分、13 源）
+    // 总分低于刚发布的 5 分单源快讯（2026-10-20 回放）。
+    let continuous_decay = 100.0 * 2.0_f32.powf(-age_hours.max(0.0) / 24.0);
     let update_bonus = updates.clamp(0, 3) * 4;
     let revision_bonus = if matches!(revision_type, "CORRECT" | "CONTRADICT") {
         6
@@ -2334,9 +2338,38 @@ mod tests {
         let twelve_hours = freshness_score(12.0, 0, "ADD");
         let one_day = freshness_score(24.0, 0, "ADD");
         assert_eq!(now, 100);
-        assert_eq!(twelve_hours, 50);
-        assert_eq!(one_day, 25);
+        assert_eq!(twelve_hours, 71);
+        assert_eq!(one_day, 50);
         assert!(freshness_score(12.0, 2, "UPDATE") > twelve_hours);
+    }
+
+    #[test]
+    fn day_old_major_events_outrank_fresh_minor_ones_in_reports() {
+        let assessed = |score: f32| Assessment {
+            profile: "world-news".to_string(),
+            score,
+            reason: "r".to_string(),
+            summary: "s".to_string(),
+            ..Assessment::default()
+        };
+        let mut major = plain_candidate("Trump suspends some Russia sanctions by executive order");
+        major.published_at = Utc::now() - chrono::Duration::hours(18);
+        // 分量取自现网两条：多源事件文章多（新颖度被重复扣分）、没有更新；单源快讯信源质量高。
+        major.independent_source_count = 13;
+        major.article_count = 6;
+        major.update_count = 0;
+        major.average_source_quality = 80;
+        major.assessment = Some(assessed(7.8));
+        let mut minor = plain_candidate("US pending home sales fall");
+        minor.published_at = Utc::now() - chrono::Duration::minutes(30);
+        minor.independent_source_count = 1;
+        minor.article_count = 1;
+        minor.update_count = 1;
+        minor.average_source_quality = 84;
+        minor.assessment = Some(assessed(5.5));
+        let major = score_candidate(major, &[], &[], &EditorialConfig::default());
+        let minor = score_candidate(minor, &[], &[], &EditorialConfig::default());
+        assert!(major.total_score > minor.total_score, "{} vs {}", major.total_score, minor.total_score);
     }
 
     #[test]
