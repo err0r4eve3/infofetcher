@@ -18,6 +18,7 @@
 | 8 | MCP：简报、快讯、搜索、事件详情、日报 | `POST /mcp`，`MCP_API_TOKEN` |
 | 9 | 入选去重（2026-10-20）：一次调用看 24 小时入选列表的标题、评审摘要和标签，找出同一具体事件的条目，小簇并入来源最多的簇 | `editorial/dedup.rs`，入选集合变化且距上次 ≥1 小时才调用；合并记入 `story_link_decisions`（model 后缀 `:brief`） |
 | 10 | LLM 栏目与短标题（2026-10-20）：评审同一次调用输出 `section`（13 栏目之一）和 `headline` | 栏目覆盖关键词栏目；短标题只替换频道帖子式原标题（表情前缀、“JUST IN”、超长） |
+| 12 | 一图流日报（2026-10-21）：每期渲染成 1080 宽竖版 PNG，按栏目列出中文短标题、为什么重要、信源数和评审分 | `editorial/card.rs`（SVG → resvg，字体 fonts-noto-cjk）；`/api/v2/brief/editions/{date}/card.png`，订阅用 `/feeds/brief/{date}.png?token=`，Atom 每期顶部嵌图；Telegram 改发图片，失败退回文字 |
 | 11 | 评审开启时，未评审的单源事件不进简报（2026-10-20） | `awaiting_assessment`；多源和命中关注不受影响 |
 
 ## 关键决策

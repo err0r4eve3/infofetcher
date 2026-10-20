@@ -10,6 +10,7 @@ import {
   Circle,
   CircleDot,
   Download,
+  ImageIcon,
   FileUp,
   FolderPlus,
   Import,
@@ -75,7 +76,7 @@ import { WorldRadar } from './WorldRadar'
 
 // The radar is the default view: request its first report alongside the session check instead of
 // after it. An unauthenticated prefetch simply fails and the radar requests again.
-if (readAppView() === 'now') prefetch('/api/v2/brief/now?hours=12')
+if (readAppView() === 'now') prefetch('/api/v2/brief/now?hours=24')
 
 type User = { username: string }
 
@@ -2126,9 +2127,14 @@ function BriefEditionsPanel() {
               <strong>{edition.edition_date}</strong>
               <small>{edition.item_count} 条 · 生成于 {formatDate(edition.generated_at)}</small>
             </div>
-            <a className="secondary-button" href={`/api/v2/brief/editions/${edition.edition_date}?format=markdown`} target="_blank" rel="noreferrer">
-              <Download size={16} /> Markdown
-            </a>
+            <div className="monitor-actions">
+              <a className="secondary-button" href={`/api/v2/brief/editions/${edition.edition_date}/card.png`} target="_blank" rel="noreferrer">
+                <ImageIcon size={16} aria-hidden="true" /> 图片
+              </a>
+              <a className="secondary-button" href={`/api/v2/brief/editions/${edition.edition_date}?format=markdown`} target="_blank" rel="noreferrer">
+                <Download size={16} aria-hidden="true" /> Markdown
+              </a>
+            </div>
           </div>
         ))}
       </div>

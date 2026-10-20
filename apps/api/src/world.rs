@@ -188,6 +188,8 @@ pub struct EventBriefItem {
     pub(crate) editorial_profile: Option<String>,
     pub(crate) editorial_score: Option<f32>,
     pub(crate) editorial_tags: Vec<String>,
+    /// 评审写的中文短标题；`title` 只在原标题像频道帖子时才换成它。
+    pub(crate) headline: Option<String>,
     pub(crate) history_note: Option<String>,
     pub(crate) history_refs: Vec<HistoryRef>,
     pub(crate) community_note: Option<String>,
@@ -300,7 +302,7 @@ async fn now_brief(
     let budget_minutes = query.minutes.map(normalize_budget);
     let report_mode = budget_minutes.is_none();
     let hours = if report_mode {
-        normalize_report_hours(query.hours.unwrap_or(12))
+        normalize_report_hours(query.hours.unwrap_or(24))
     } else {
         query.hours.unwrap_or(24).clamp(1, 24 * 30)
     };
@@ -1023,6 +1025,7 @@ fn score_candidate(
         editorial_profile: assessed.then(|| assessment.profile.clone()),
         editorial_score: assessed.then_some(assessment.score),
         editorial_tags: assessment.tags,
+        headline: assessment.headline,
         history_note: assessment.history_note,
         history_refs: assessment.history_refs,
         community_note: assessment.community_note,
@@ -2141,6 +2144,7 @@ mod tests {
             editorial_profile: None,
             editorial_score: None,
             editorial_tags: Vec::new(),
+            headline: None,
             history_note: None,
             history_refs: Vec::new(),
             community_note: None,

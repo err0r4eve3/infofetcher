@@ -2272,6 +2272,11 @@ a.secondary-button:hover,
   gap: 3px;
 }
 
+.monitor-row > .monitor-actions {
+  display: flex;
+  gap: 8px;
+}
+
 .monitor-row small {
   overflow: hidden;
   color: var(--text-muted);

@@ -25,7 +25,7 @@
 
 ## World Radar v2
 
-- `GET /api/v2/brief/now?hours=12|24`：返回半日/全天全面报告、主题分节、候选/入选统计和事件级五维评分。省略 `minutes` 时 `mode=report`，12/24 小时分别最多入选 30/48 个通过证据门槛的去重事件；旧客户端仍可传 `minutes=3|10|20` 使用有限简报模式。
+- `GET /api/v2/brief/now?hours=24|12`：返回全天/半日全面报告（省略 `hours` 时 24 小时）、主题分节、候选/入选统计和事件级五维评分。省略 `minutes` 时 `mode=report`，24/12 小时分别最多入选 90/60 个通过证据门槛的去重事件；旧客户端仍可传 `minutes=3|10|20` 使用有限简报模式。
 - `GET /api/v2/events/{id}`：返回事件卡、`event_revisions` 时间线与按质量排序的原始证据。
   - `evidence` 保留兼容排序字段 `published_at`，新增真实可空的 `reported_published_at` 与 `fetched_at`。`provenance` 分开返回文章链接站点 `link_host`、订阅入口 `feed_host`、已知聚合链接标记及 `duplicate_group`；站点不等于已核验的原始发布者。重复组仅连接相同规范链接或非空正文指纹的材料，不按媒体名称合并，不识别转载方向，未匹配不代表独立。
   - `collection` 返回对应订阅源的最近成功时间和连续失败次数。`evidence_scope.total_articles` 为该事件全部未静音材料数；其余分组及采集状态统计仅覆盖质量排序前 30 条返回材料，不代表完整媒体样本，也不推断报道盲区。无新增采集或外部调用。
@@ -78,6 +78,7 @@
 - `GET /api/feeds` 新增 `editorial_profile` 与 `quality_stats`（`snr`、`average_score`、`passed_events`、`assessed_events`、`auto_adjust`、`declining`）。`PATCH /api/feeds/{id}` 接受 `editorial_profile`：`world-news` | `tech-research` | `long-read` | `auto`。
 - `GET /api/v2/brief/editions`：最近 60 期日报与订阅路径；`POST` 立即生成（或重新生成）今天的一期，不推送。
 - `GET /api/v2/brief/editions/{YYYY-MM-DD}`：一期日报 JSON；`?format=markdown` 返回 Markdown。
+- `GET /api/v2/brief/editions/{YYYY-MM-DD}/card.png`：一图流日报 PNG（需登录）。订阅器用 `GET /feeds/brief/{YYYY-MM-DD}.png?token=…`（同 `BRIEF_FEED_TOKEN`）。
 - `GET /feeds/brief.xml?token=…`：最近 30 期的 Atom 订阅。需配置 `BRIEF_FEED_TOKEN`，未配置时 404。
 - `POST /mcp`：MCP Streamable HTTP（JSON 响应，无 SSE），`Authorization: Bearer <MCP_API_TOKEN>`。工具：`brief_now`、`wire_now`、`search_articles`、`event_detail`、`brief_edition`。未配置 token 时 404。
 

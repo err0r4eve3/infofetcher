@@ -20,6 +20,7 @@ use crate::{
 };
 
 pub mod assess;
+pub mod card;
 pub mod community;
 pub mod dedup;
 pub mod edition;
@@ -38,7 +39,9 @@ pub fn router() -> Router<AppState> {
             get(list_editions).post(publish_edition),
         )
         .route("/api/v2/brief/editions/{date}", get(get_edition))
+        .route("/api/v2/brief/editions/{date}/card.png", get(edition_card))
         .route("/feeds/brief.xml", get(atom_feed))
+        .route("/feeds/brief/{file}", get(feed_card))
 }
 
 /// 评审、信源画像和日报共用一个后台循环，用 advisory lock 保证多实例时只有一个在跑。
@@ -255,6 +258,50 @@ async fn get_edition(
     Ok(Json(edition).into_response())
 }
 
+/// 一图流日报（登录后在设置页打开）。
+async fn edition_card(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(date): Path<String>,
+) -> AppResult<Response> {
+    auth::require_session(&state.pool, &headers).await?;
+    card_response(&state, &date).await
+}
+
+/// 订阅器里的一图流：与 Atom 用同一个只读 token。
+async fn feed_card(
+    State(state): State<AppState>,
+    Path(file): Path<String>,
+    Query(query): Query<FeedQuery>,
+) -> AppResult<Response> {
+    let Some(expected) = &state.config.editorial.brief_feed_token else {
+        return Err(AppError::NotFound);
+    };
+    if !auth::constant_time_eq(expected, query.token.unwrap_or_default().trim()) {
+        return Err(AppError::Unauthorized);
+    }
+    let date = file.strip_suffix(".png").ok_or(AppError::NotFound)?;
+    card_response(&state, date).await
+}
+
+async fn card_response(state: &AppState, date: &str) -> AppResult<Response> {
+    let date = NaiveDate::parse_from_str(date, "%Y-%m-%d")
+        .map_err(|_| AppError::BadRequest("日期格式应为 YYYY-MM-DD".to_string()))?;
+    let edition = edition::by_date(state, date)
+        .await?
+        .ok_or(AppError::NotFound)?;
+    let png = edition::card_png(state, &edition).await?;
+    Ok((
+        [
+            (header::CONTENT_TYPE, "image/png"),
+            // 一期定格后内容不变；重新生成当天日报时允许一小时内看到旧图。
+            (header::CACHE_CONTROL, "private, max-age=3600"),
+        ],
+        png,
+    )
+        .into_response())
+}
+
 #[derive(Debug, Deserialize)]
 struct FeedQuery {
     token: Option<String>,
@@ -278,6 +325,7 @@ async fn atom_feed(
         &editions,
         public_url,
         &format!("{public_url}/feeds/brief.xml"),
+        Some(expected),
     );
     Ok((
         [(header::CONTENT_TYPE, "application/atom+xml; charset=utf-8")],

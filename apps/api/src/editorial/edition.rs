@@ -10,7 +10,7 @@ use uuid::Uuid;
 use crate::{
     config::Config,
     error::{AppError, AppResult},
-    push::send_telegram,
+    push::{send_telegram, send_telegram_photo},
     state::AppState,
     world::{self, EventBriefItem, HistoryRef},
 };
@@ -38,6 +38,9 @@ pub struct EditionItem {
     pub event_id: Uuid,
     pub section: String,
     pub title: String,
+    /// 评审写的中文短标题；旧日报没有这个字段。
+    #[serde(default)]
+    pub headline: Option<String>,
     pub what_happened: String,
     pub why_it_matters: String,
     pub history_note: Option<String>,
@@ -64,6 +67,7 @@ impl From<&EventBriefItem> for EditionItem {
             event_id: item.event_id,
             section: item.report_section.clone(),
             title: one_line(&item.title, TITLE_CHARS),
+            headline: item.headline.clone(),
             what_happened: one_line(&item.what_happened, SUMMARY_CHARS),
             // 未评审时“为什么重要”是排序模板语，不进日报。
             why_it_matters: if item.editorial_score.is_some() {
@@ -195,6 +199,46 @@ fn edition_from_row(row: sqlx::postgres::PgRow) -> Edition {
     }
 }
 
+/// 渲染一期的一图流。栅格化是纯 CPU 计算，放到阻塞线程池。
+pub async fn card_png(state: &AppState, edition: &Edition) -> AppResult<Vec<u8>> {
+    let items = edition.items.clone();
+    let date = edition.edition_date;
+    let host = public_host(&state.config.app_public_url);
+    tokio::task::spawn_blocking(move || super::card::render_png(date, &items, &host))
+        .await
+        .map_err(|error| AppError::Anyhow(error.into()))?
+}
+
+fn public_host(public_url: &str) -> String {
+    public_url
+        .trim_end_matches('/')
+        .split("://")
+        .last()
+        .unwrap_or(public_url)
+        .to_string()
+}
+
+pub fn card_feed_url(public_url: &str, date: NaiveDate, token: &str) -> String {
+    format!(
+        "{}/feeds/brief/{}.png?token={}",
+        public_url.trim_end_matches('/'),
+        date.format("%Y-%m-%d"),
+        url_encode(token)
+    )
+}
+
+fn url_encode(value: &str) -> String {
+    value
+        .bytes()
+        .map(|byte| match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                (byte as char).to_string()
+            }
+            _ => format!("%{byte:02X}"),
+        })
+        .collect()
+}
+
 pub fn event_url(public_url: &str, event_id: Uuid) -> String {
     format!("{}/?event={event_id}", public_url.trim_end_matches('/'))
 }
@@ -208,7 +252,7 @@ fn section_label(key: &str) -> &'static str {
 }
 
 /// 按固定栏目顺序分组的条目。
-fn grouped(items: &[EditionItem]) -> Vec<(&'static str, Vec<&EditionItem>)> {
+pub(super) fn grouped(items: &[EditionItem]) -> Vec<(&'static str, Vec<&EditionItem>)> {
     SECTIONS
         .iter()
         .map(|(key, label)| {
@@ -328,7 +372,13 @@ pub fn render_html(items: &[EditionItem], public_url: &str) -> String {
     out
 }
 
-pub fn render_atom(editions: &[Edition], public_url: &str, feed_url: &str) -> String {
+/// `image_token` 为订阅 token：有它时每期正文顶部嵌入一图流（阅读器取图片也带不了会话 Cookie）。
+pub fn render_atom(
+    editions: &[Edition],
+    public_url: &str,
+    feed_url: &str,
+    image_token: Option<&str>,
+) -> String {
     let updated = editions
         .first()
         .map_or_else(Utc::now, |edition| edition.generated_at)
@@ -346,7 +396,14 @@ pub fn render_atom(editions: &[Edition], public_url: &str, feed_url: &str) -> St
             escape_html(&format!("{}/feeds/brief/{date}", public_url.trim_end_matches('/'))),
             edition.generated_at.to_rfc3339(),
             escape_html(public_url),
-            escape_html(&render_html(&edition.items, public_url))
+            escape_html(&format!(
+                "{}{}",
+                image_token.map_or_else(String::new, |token| format!(
+                    "<p><img src=\"{}\" alt=\"一图流日报 {date}\"/></p>",
+                    escape_html(&card_feed_url(public_url, edition.edition_date, token))
+                )),
+                render_html(&edition.items, public_url)
+            ))
         ));
     }
     out.push_str("</feed>\n");
@@ -401,8 +458,23 @@ async fn deliver(state: &AppState, edition: &Edition) {
     }
     if editorial.brief_telegram {
         attempted = true;
-        if let Err(error) = send_telegram(&state.config, &state.http, &text).await {
-            errors.push(format!("telegram: {error}"));
+        // 先发一图流；渲染或发图失败时退回纯文字，保证当天能收到。
+        let photo = match card_png(state, edition).await {
+            Ok(png) => {
+                let caption = format!(
+                    "情报日报 · {}\n{}",
+                    edition.edition_date.format("%Y-%m-%d"),
+                    state.config.app_public_url.trim_end_matches('/')
+                );
+                send_telegram_photo(&state.config, &state.http, png, &caption).await
+            }
+            Err(error) => Err(error),
+        };
+        if let Err(photo_error) = photo {
+            tracing::warn!(%photo_error, "brief card delivery failed, sending text");
+            if let Err(error) = send_telegram(&state.config, &state.http, &text).await {
+                errors.push(format!("telegram: {error}"));
+            }
         }
     }
     if !attempted {
@@ -452,6 +524,7 @@ mod tests {
             event_id: Uuid::nil(),
             section: section.to_string(),
             title: title.to_string(),
+            headline: None,
             what_happened: "发生了什么".to_string(),
             why_it_matters: "影响谁".to_string(),
             history_note: Some("本站 10 月 1 日记录过上一阶段".to_string()),
@@ -506,7 +579,9 @@ mod tests {
             &[edition],
             "https://x.test",
             "https://x.test/feeds/brief.xml?token=t",
+            Some("t&u"),
         );
+        assert!(atom.contains("https://x.test/feeds/brief/2026-10-16.png?token=t%26u"));
         assert!(atom.contains("<title>信息简报 · 2026-10-16</title>"));
         assert!(atom.contains("A &amp;lt;b&amp;gt;&amp;amp;&amp;lt;/b&amp;gt; B"));
         assert!(!atom.contains("<b>"));

@@ -164,10 +164,10 @@ export function WorldRadar({
   const [topic, setTopic] = useState<ReportSectionKey | 'all'>('all')
   const [coverage, setCoverage] = useState<CoverageFilter>('all')
   const [reportFilters, setReportFilters] = useState<ReportFilters>(EMPTY_REPORT_FILTERS)
-  const [reportHours, setReportHours] = useState(12)
+  const [reportHours, setReportHours] = useState(24)
   const [wireHours, setWireHours] = useState(24)
   const [brief, setBrief] = useState<NowBrief | null>(() => (
-    readTimedCache(briefCache, `${userName}:report:12`)
+    readTimedCache(briefCache, `${userName}:report:24`)
   ))
   const [wire, setWire] = useState<WireResponse | null>(() => (
     readTimedCache(wireCache, `${userName}:24`)
@@ -184,7 +184,7 @@ export function WorldRadar({
   const [question, setQuestion] = useState('')
   const [watchName, setWatchName] = useState('')
   const [watchQuery, setWatchQuery] = useState('')
-  const [loading, setLoading] = useState(() => !readTimedCache(briefCache, `${userName}:report:12`))
+  const [loading, setLoading] = useState(() => !readTimedCache(briefCache, `${userName}:report:24`))
   const [wireLoading, setWireLoading] = useState(false)
   const [watchesLoading, setWatchesLoading] = useState(() => !readTimedCache(watchesCache, userName))
   const [detailLoading, setDetailLoading] = useState(false)
@@ -843,8 +843,8 @@ export function WorldRadar({
               <label className="report-period">
                 <Clock3 size={17} aria-hidden="true" />
                 <select aria-label="报告覆盖范围" value={reportHours} onChange={(event) => setReportHours(Number(event.target.value))}>
-                  <option value={12}>近 12 小时</option>
                   <option value={24}>近 24 小时</option>
+                  <option value={12}>近 12 小时</option>
                 </select>
                 <ChevronDown size={14} aria-hidden="true" />
               </label>

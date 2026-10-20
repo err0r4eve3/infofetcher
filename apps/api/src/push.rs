@@ -67,6 +67,46 @@ pub async fn send_telegram(
     Ok(())
 }
 
+/// 发一张图片，`caption` 不超过 Telegram 的 1024 字符上限。
+pub async fn send_telegram_photo(
+    config: &Config,
+    http: &reqwest::Client,
+    png: Vec<u8>,
+    caption: &str,
+) -> AppResult<()> {
+    if config.telegram_bot_token.trim().is_empty() || config.telegram_chat_id.trim().is_empty() {
+        return Err(AppError::BadRequest(
+            "TELEGRAM_BOT_TOKEN 和 TELEGRAM_CHAT_ID 未配置".to_string(),
+        ));
+    }
+    let endpoint = format!(
+        "{}/bot{}/sendPhoto",
+        config.telegram_api_base.trim_end_matches('/'),
+        config.telegram_bot_token
+    );
+    let photo = reqwest::multipart::Part::bytes(png)
+        .file_name("brief.png")
+        .mime_str("image/png")?;
+    let form = reqwest::multipart::Form::new()
+        .text("chat_id", config.telegram_chat_id.clone())
+        .text("caption", caption.chars().take(1_000).collect::<String>())
+        .part("photo", photo);
+    let response = http
+        .post(endpoint)
+        .multipart(form)
+        .timeout(config.telegram_timeout * 3)
+        .send()
+        .await?;
+    if !response.status().is_success() {
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        return Err(AppError::Upstream(format!(
+            "Telegram 发图失败: {status} {body}"
+        )));
+    }
+    Ok(())
+}
+
 fn clip_message_part(value: &str, limit: usize) -> String {
     let mut clipped = value.chars().take(limit).collect::<String>();
     if value.chars().count() > limit {
