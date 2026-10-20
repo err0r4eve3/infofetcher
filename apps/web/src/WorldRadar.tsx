@@ -989,7 +989,7 @@ export function WorldRadar({
                 !briefError && (topic !== 'all' || coverage !== 'all' || hasReportFilters(reportFilters) ? <div className="radar-empty">
                   <FileSearch aria-hidden="true" /><p>没有符合筛选的事件</p>
                   <button type="button" className="radar-refresh" onClick={() => { filterReport('all', 'all'); changeReportFilters(EMPTY_REPORT_FILTERS) }}>清除筛选</button>
-                </div> : <BriefWorkflowEmpty workflow={workflow} hasBriefItems={briefItems.length > 0} />)
+                </div> : <BriefWorkflowEmpty workflow={workflow} hasBriefItems={briefItems.length > 0} reportHours={reportHours} onWorkflow={setWorkflow} onWiden={() => setReportHours(24)} />)
               )}
             </section>
 
@@ -1047,7 +1047,9 @@ export function WorldRadar({
                 <ArrowRight size={17} aria-hidden="true" />
               </article>
             )) : (
-              !wireError && <div className="radar-empty"><Radio aria-hidden="true" />暂无快讯</div>
+              !wireError && <div className="radar-empty"><Radio aria-hidden="true" /><p>{wireHours < 72 ? '这段时间暂无快讯' : '近 3 天暂无快讯'}</p>
+                {wireHours < 72 && <button type="button" className="radar-refresh" onClick={() => setWireHours(72)}>查看近 3 天</button>}
+              </div>
             )}
           </section>
         </main>
@@ -1092,7 +1094,7 @@ export function WorldRadar({
                 </div>
               </article>
             )) : (
-              <div className="radar-empty"><Target />暂无关注</div>
+              <div className="radar-empty"><Target /><p>暂无关注。在上方填写名称和主题，创建第一个关注。</p></div>
             )}
           </section>
         </main>
@@ -1326,20 +1328,35 @@ function EventInspector({
   )
 }
 
-function BriefWorkflowEmpty({ workflow, hasBriefItems }: { workflow: BriefWorkflow; hasBriefItems: boolean }) {
+// Every empty state names the next step it leads to.
+function BriefWorkflowEmpty({ workflow, hasBriefItems, reportHours, onWorkflow, onWiden }: {
+  workflow: BriefWorkflow
+  hasBriefItems: boolean
+  reportHours: number
+  onWorkflow: (workflow: BriefWorkflow) => void
+  onWiden: () => void
+}) {
   if (!hasBriefItems) {
-    return <div className="radar-empty"><FileSearch />当前范围暂无事件</div>
+    return <div className="radar-empty"><FileSearch /><p>当前范围暂无事件</p>
+      {reportHours < 24 && <button type="button" className="radar-refresh" onClick={onWiden}>查看近 24 小时</button>}
+    </div>
   }
   if (workflow === 'pending') {
-    return <div className="radar-empty complete"><CheckCircle2 />已处理完成</div>
+    return <div className="radar-empty complete"><CheckCircle2 /><p>本期已处理完成</p>
+      <button type="button" className="radar-refresh" onClick={() => onWorkflow('all')}>查看全部事件</button>
+    </div>
   }
   if (workflow === 'saved') {
-    return <div className="radar-empty"><Bookmark />暂无稍后项目</div>
+    return <div className="radar-empty"><Bookmark /><p>暂无稍后项目。在事件详情点“稍后处理”，事件会收在这里。</p>
+      <button type="button" className="radar-refresh" onClick={() => onWorkflow('pending')}>回到待处理</button>
+    </div>
   }
   if (workflow === 'done') {
-    return <div className="radar-empty"><ListChecks />暂无已完成事件</div>
+    return <div className="radar-empty"><ListChecks /><p>暂无已完成事件</p>
+      <button type="button" className="radar-refresh" onClick={() => onWorkflow('pending')}>回到待处理</button>
+    </div>
   }
-  return <div className="radar-empty"><FileSearch />暂无事件</div>
+  return <div className="radar-empty"><FileSearch /><p>暂无事件</p></div>
 }
 
 function RadarSkeleton({ label, compact = false }: { label: string; compact?: boolean }) {
