@@ -22,7 +22,7 @@ use crate::{
     world::{self, AssessmentCandidate, HistoryRef},
 };
 
-pub const PROMPT_VERSION: &str = "editorial-assess-v2";
+pub const PROMPT_VERSION: &str = "editorial-assess-v3";
 const BATCH_SIZE: usize = 6;
 const MAX_BATCHES_PER_TURN: usize = 6;
 const LOOKBACK_HOURS: i64 = 24;
@@ -35,7 +35,10 @@ const HISTORY_GAP_HOURS: i64 = 2;
 const MAX_HISTORY_REFS: usize = 2;
 const MAX_OUTPUT_TOKENS: u32 = 12_000;
 const TEXT_LIMIT: usize = 240;
-const HEADLINE_LIMIT: usize = 40;
+/// 提示词要求 ≤36 字符；schema 上限放宽到 60：严格 schema 的 maxLength 会在解码时硬切，
+/// v2 用 40 时出现过“Coinbase Institutional 再转出 633 枚 B”这种半截标题。超过上限就弃用，回退原标题。
+const HEADLINE_LIMIT: usize = 48;
+const HEADLINE_SCHEMA_LIMIT: usize = 60;
 
 /// 一个待评审事件的全部输入。
 #[derive(Debug, Clone)]
@@ -586,8 +589,7 @@ fn validate(
         .map(|(key, _)| *key)
         .find(|key| *key == raw.section.trim());
     let headline = Some(clean_text(&raw.headline))
-        .filter(|headline| !headline.is_empty())
-        .map(|headline| headline.chars().take(HEADLINE_LIMIT).collect::<String>());
+        .filter(|headline| !headline.is_empty() && headline.chars().count() <= HEADLINE_LIMIT);
     Some(ValidAssessment {
         profile,
         score: (raw.score * 10.0).round() as f32 / 10.0,
@@ -689,15 +691,16 @@ fn system_prompt() -> String {
 
 - 只依据给定的事件内容和元数据。不得编造事实、名称、版本、日期、数字、引语、互动数据或来源；证据不完整时保留不确定性。
 - profile：按内容的形式和目的选择，不只看话题。fixed_profile 非空时必须使用它。
-- score：按所选 Profile 的评分标准给 0–10 分，可带一位小数。同一批事件使用同一把尺子。评分衡量事件本身的重要性，不衡量材料完整度：content 为空、只有导航或明显截断时，按标题、来源和独立来源数判断，不因正文缺失降分，并在 reason 里说明信息有限。
-- reason：一句话说明为什么重要或不重要，写出受影响的对象和具体变化。不写“意义重大”“里程碑”“重塑行业”这类套话。
-- summary：一句话写清实际发生了什么、涉及谁。区分已宣布的计划或宣称与已经发生、已上线或已独立证实的事实。
+- score：按所选 Profile 的评分标准给 0–10 分，可带一位小数。同一批事件使用同一把尺子。评分衡量事件本身的重要性，不衡量材料完整度：content 为空、只有导航或明显截断时，按标题、来源和独立来源数判断，不因正文缺失降分。
+- 汇总稿：把多条互不相关的新闻打包在一起的早报、简报、新闻快报、市场直播，不按其中某一条评分：score 不超过 3，section 用 general，headline 写成“某某 X 月 X 日新闻汇总”。围绕同一事件持续更新的直播不算汇总稿，按该事件评分。
+- reason：读者看到的“为什么重要”。一句话，不超过 60 字，写受影响的对象和具体变化；不重要时写清影响为什么有限。只谈事件，不谈材料：不写正文是否截断、来源有几个、能否核实（可信度由系统另行显示），也不评论栏目或 Profile 的归属。不写“意义重大”“里程碑”“重塑行业”这类套话。
+- summary：一句话写清实际发生了什么、涉及谁，不超过 100 字。写事件本身，不描述页面、正文、推文或转载形式。区分已宣布的计划或宣称与已经发生、已上线或已独立证实的事实；宣称用“某方称”归属。
 - tags：3–5 个具体的话题标签。
 - history_ids 与 history_note：history_candidates 是本站更早的评审记录，只是候选，不是独立证实。只有能说明直接关系时才引用：同一产品的上一版本、同一事件的早期阶段、同一政策/价格/能力的有记录变化。共享公司、人物或宽泛话题（如 AI、中东局势）不够。最多引用 2 条；history_note 用一到两句写出之前记录了什么、现在有什么变化，日期写成“本站 X 月 X 日记录”，不要推断事件本身的日期。没有合适候选时 history_ids 为空数组、history_note 为空字符串，不要硬凑回顾。
 - community_note：只根据 comments，用一到两句概括最有价值的论点、分歧或亲历经验，写明这是评论者的观点，与已确认的事实分开。互动量不代表共识。没有实质讨论时为空字符串。
 - takeaway：只有 long-read 填写，一到两句写出可借鉴的方法、证据或结论及其适用条件；其他 Profile 为空字符串。
 - section：从栏目目录中选一个最贴切的键，按事件实质而不是出现的词选择（如加密算法、证书属于 cyber 或 tech，不属于 crypto；航天探测属于 science）。
-- headline：不超过 28 个汉字的中文短标题，写清谁做了什么，保留产品、机构、人名等专有名词，不用表情、栏目前缀、感叹或“重磅”“突发”这类词。
+- headline：中文短标题，写清谁做了什么，总长不超过 36 个字符（英文专名按字母计）。放不下时删次要信息或改用通用称呼，不要把专名写半截。保留产品、机构、人名等专有名词，不用表情、栏目前缀、感叹或“重磅”“突发”这类词。
 - 所有文字用简体中文；产品、机构、人名等专有名词保留原文。每个输入事件都要输出一条，id 与输入一致。
 
 # Profile 目录
@@ -744,7 +747,7 @@ fn assessment_schema(count: usize) -> Value {
                             "type": "string",
                             "enum": world::REPORT_SECTIONS.iter().map(|(key, _)| *key).collect::<Vec<_>>()
                         },
-                        "headline": text(HEADLINE_LIMIT)
+                        "headline": text(HEADLINE_SCHEMA_LIMIT)
                     },
                     "required": [
                         "id", "profile", "score", "reason", "summary", "tags",
@@ -817,7 +820,7 @@ mod tests {
         assert_eq!(valid.headline.as_deref(), Some("vLLM 发布 1.0 版本"));
         let mut unknown = raw();
         unknown.section = "markets".to_string();
-        unknown.headline = "  ".to_string();
+        unknown.headline = "Coinbase Institutional 向一个未知钱包转出了六百三十三枚比特币，价值约五千一百万美元".to_string();
         let valid = validate(unknown, &input(None, false), 0, 8).unwrap();
         assert_eq!(valid.section, None, "unknown keys fall back to keyword sections");
         assert_eq!(valid.headline, None);
@@ -945,6 +948,8 @@ mod tests {
             "里程碑",
             "共享公司、人物或宽泛话题",
             "不因正文缺失降分",
+            "汇总稿",
+            "只谈事件，不谈材料",
         ] {
             assert!(prompt.contains(rule), "missing rule: {rule}");
         }
