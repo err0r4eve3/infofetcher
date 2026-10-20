@@ -320,7 +320,8 @@ async fn create_feed(
            quality_score = EXCLUDED.quality_score,
            updated_at = now()
          RETURNING id, folder_id, title, site_url, feed_url, hub_adapter, hub_path,
-                   source_type, language, region, quality_score,
+                   source_type, language, region, quality_score, editorial_profile,
+                   NULL::integer AS quality_assessed_events,
                    0::integer AS feedback_weight, false AS muted,
                    last_fetched_at, last_success_at, next_fetch_at, consecutive_failures, last_error,
                    0::bigint AS article_count, 0::bigint AS unread_count",
@@ -447,7 +448,8 @@ async fn create_social_source(
            updated_at = now(),
            next_fetch_at = LEAST(feeds.next_fetch_at, now())
          RETURNING id, folder_id, title, site_url, feed_url, hub_adapter, hub_path,
-                   source_type, language, region, quality_score,
+                   source_type, language, region, quality_score, editorial_profile,
+                   NULL::integer AS quality_assessed_events,
                    0::integer AS feedback_weight, false AS muted,
                    last_fetched_at, last_success_at, next_fetch_at, consecutive_failures, last_error,
                    0::bigint AS article_count, 0::bigint AS unread_count",

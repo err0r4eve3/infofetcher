@@ -221,6 +221,20 @@
       "60"
     ]
   },
+  "x-ai-voices": {
+    "title": "X · AI 领军人物与观察者",
+    "link": "https://x.com/search?q=(from%3Ademishassabis%20OR%20from%3Aylecun%20OR%20from%3AAndrewNg%20OR%20from%3Ailyasut%20OR%20from%3Ageoffreyhinton%20OR%20from%3Ayoshua_bengio%20OR%20from%3AAIatMeta%20OR%20from%3Arunwayml%20OR%20from%3Akimmonismus%20OR%20from%3Arohanpaul_ai%20OR%20from%3AXudong07452910)",
+    "description": "Hassabis、LeCun、吴恩达、Hinton、Bengio、Meta AI、Chubby、Rohan Paul 等",
+    "args": [
+      "twitter",
+      "search",
+      "(from:demishassabis OR from:ylecun OR from:AndrewNg OR from:ilyasut OR from:geoffreyhinton OR from:yoshua_bengio OR from:AIatMeta OR from:runwayml OR from:kimmonismus OR from:rohanpaul_ai OR from:Xudong07452910) -filter:replies -filter:nativeretweets",
+      "--product",
+      "live",
+      "--limit",
+      "60"
+    ]
+  },
   "x-crypto-news": {
     "title": "X · Crypto 快讯与链上",
     "link": "https://x.com/search?q=(from%3AWatcherGuru%20OR%20from%3Atier10k%20OR%20from%3AWuBlockchain%20OR%20from%3Azachxbt%20OR%20from%3APeckShieldAlert%20OR%20from%3Alookonchain%20OR%20from%3AEmberCN%20OR%20from%3Awhale_alert%20OR%20from%3ABitMEXResearch%20OR%20from%3AFarsideUK)",

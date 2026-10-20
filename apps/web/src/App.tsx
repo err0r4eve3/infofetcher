@@ -285,6 +285,8 @@ const READY_MADE_FEEDS: ReadyMadeFeed[] = [
   { title: 'BleepingComputer', url: 'https://www.bleepingcomputer.com/feed/', category: '科技媒体' },
   { title: 'The Register', url: 'https://www.theregister.com/headlines.atom', category: '科技媒体' },
   { title: 'LWN.net', url: 'https://lwn.net/headlines/rss', category: '科技媒体' },
+  { title: 'THE DECODER', url: 'https://the-decoder.com/feed/', category: '科技媒体' },
+  { title: '量子位', rsshubPath: 'qbitai/category/资讯', category: '科技媒体' },
   { title: 'Hacker News Front Page', url: 'https://hnrss.org/frontpage', category: '科技' },
   { title: 'GitHub Blog', url: 'https://github.blog/feed/', category: '科技' },
   { title: 'Rust Blog', url: 'https://blog.rust-lang.org/feed.xml', category: '科技' },
@@ -311,6 +313,8 @@ const READY_MADE_FEEDS: ReadyMadeFeed[] = [
     category: '专家观点'
   },
   { title: 'ChinaTalk', url: 'https://www.chinatalk.media/feed', category: '专家观点' },
+  { title: 'Interconnects', url: 'https://www.interconnects.ai/feed', category: '专家观点' },
+  { title: 'The Batch', rsshubPath: 'deeplearning/the-batch', category: '专家观点' },
   {
     title: 'Asianometry',
     url: 'https://www.youtube.com/feeds/videos.xml?channel_id=UC1LpsuAUaKoMzzJSEt5WImw',
