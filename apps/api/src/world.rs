@@ -1082,7 +1082,7 @@ fn select_diverse_traced(
         let Some(best_index) = pool
             .iter()
             .map(|(item, _, max_similarity)| {
-                (selection_score_with(item, &selected, limit, *max_similarity), item)
+                (selection_score_with(item, &selected, limit, section_shares, *max_similarity), item)
             })
             .enumerate()
             .max_by(|(_, (left_score, left)), (_, (right_score, right))| {
@@ -1121,7 +1121,7 @@ fn select_diverse_traced(
             item,
             format!(
                 "名额已满，最终挑选分 {:.1}",
-                selection_score_with(item, &selected, limit, *max_similarity)
+                selection_score_with(item, &selected, limit, section_shares, *max_similarity)
             ),
         );
     }
@@ -1216,7 +1216,7 @@ fn selection_score(item: &EventBriefItem, selected: &[EventBriefItem], limit: us
         .iter()
         .map(|selected_item| brief_title_similarity(&selected_item.title, &item.title))
         .fold(0.0_f32, f32::max);
-    selection_score_with(item, selected, limit, max_similarity)
+    selection_score_with(item, selected, limit, &HashMap::new(), max_similarity)
 }
 
 /// `max_similarity` 是条目标题与已选条目标题的最大 Jaccard 相似度，由调用方增量维护。
@@ -1224,6 +1224,7 @@ fn selection_score_with(
     item: &EventBriefItem,
     selected: &[EventBriefItem],
     limit: usize,
+    section_shares: &HashMap<String, f32>,
     max_similarity: f32,
 ) -> f32 {
     let mut score = item.total_score as f32;
@@ -1253,11 +1254,14 @@ fn selection_score_with(
         .iter()
         .filter(|selected_item| selected_item.report_section == topic)
         .count();
-    // 栏目已细分，软上限按期数放宽；硬上限另由 section_shares 控制。
+    // 软上限取硬上限（section_shares）的 60%：重要栏目配额大，软上限也该大。
+    // 原先所有栏目都是 limit/10（9 条），政治、冲突卡在 9 条，5 分的加密条目照样入选（2026-10-20）。
     let topic_cap = if topic == "general" {
         (limit / 3).max(2)
     } else {
-        (limit / 10).max(2)
+        section_cap(topic, limit, section_shares)
+            .map_or(limit / 10, |cap| (cap as f32 * 0.6).ceil() as usize)
+            .max(2)
     };
     if topic_count >= topic_cap {
         score -= ((topic_count - topic_cap + 1) as f32) * 10.0;
@@ -2492,8 +2496,15 @@ mod tests {
                     .iter()
                     .enumerate()
                     .max_by(|(_, l), (_, r)| {
-                        selection_score(l, &selected, limit)
-                            .total_cmp(&selection_score(r, &selected, limit))
+                        let full = |item: &EventBriefItem| {
+                            let similarity = selected
+                                .iter()
+                                .map(|chosen| brief_title_similarity(&chosen.title, &item.title))
+                                .fold(0.0_f32, f32::max);
+                            selection_score_with(item, &selected, limit, shares, similarity)
+                        };
+                        full(l)
+                            .total_cmp(&full(r))
                             .then_with(|| l.total_score.cmp(&r.total_score))
                             .then_with(|| l.published_at.cmp(&r.published_at))
                     })
