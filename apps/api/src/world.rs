@@ -1116,12 +1116,18 @@ fn select_diverse_traced(
         *section_counts.entry(item.report_section.clone()).or_default() += 1;
         selected.push(item);
     }
+    let floor = selected
+        .iter()
+        .map(|item| item.total_score)
+        .min()
+        .unwrap_or_default();
     for (item, _, max_similarity) in &pool {
+        let breakdown = selection_breakdown(item, &selected, limit, section_shares, *max_similarity);
         on_drop(
             item,
             format!(
-                "名额已满，最终挑选分 {:.1}",
-                selection_score_with(item, &selected, limit, section_shares, *max_similarity)
+                "名额已满，最终挑选分 {:.1}（相似扣 {:.1}，栏目扣 {:.1}，来源扣 {:.1}；入选最低总分 {floor}）",
+                breakdown.score, breakdown.similarity, breakdown.topic, breakdown.source
             ),
         );
     }
@@ -1227,6 +1233,25 @@ fn selection_score_with(
     section_shares: &HashMap<String, f32>,
     max_similarity: f32,
 ) -> f32 {
+    selection_breakdown(item, selected, limit, section_shares, max_similarity).score
+}
+
+/// 挑选分及各项扣分，`explain-brief` 打印明细。
+struct SelectionBreakdown {
+    score: f32,
+    similarity: f32,
+    topic: f32,
+    source: f32,
+}
+
+fn selection_breakdown(
+    item: &EventBriefItem,
+    selected: &[EventBriefItem],
+    limit: usize,
+    section_shares: &HashMap<String, f32>,
+    max_similarity: f32,
+) -> SelectionBreakdown {
+    let mut breakdown = SelectionBreakdown { score: 0.0, similarity: 0.0, topic: 0.0, source: 0.0 };
     let mut score = item.total_score as f32;
     if item.independent_source_count >= 2 {
         score += 4.0;
@@ -1244,10 +1269,12 @@ fn selection_score_with(
         score -= 30.0;
     }
     if selected.is_empty() {
-        return score;
+        breakdown.score = score;
+        return breakdown;
     }
 
-    score -= max_similarity * 22.0;
+    breakdown.similarity = max_similarity * 22.0;
+    score -= breakdown.similarity;
 
     let topic = item.report_section.as_str();
     let topic_count = selected
@@ -1264,7 +1291,8 @@ fn selection_score_with(
             .max(2)
     };
     if topic_count >= topic_cap {
-        score -= ((topic_count - topic_cap + 1) as f32) * 10.0;
+        breakdown.topic = ((topic_count - topic_cap + 1) as f32) * 10.0;
+        score -= breakdown.topic;
     }
 
     let normalized_sources = item
@@ -1293,10 +1321,12 @@ fn selection_score_with(
             .collect::<Vec<_>>();
         let repeated = repeat_counts.iter().filter(|count| **count > 0).count();
         let max_repeat = repeat_counts.into_iter().max().unwrap_or_default();
-        score -= (max_repeat as f32 * 6.0).min(MAX_SOURCE_REPEAT_PENALTY);
-        score -= repeated as f32 / normalized_sources.len() as f32 * 8.0;
+        breakdown.source = (max_repeat as f32 * 6.0).min(MAX_SOURCE_REPEAT_PENALTY)
+            + repeated as f32 / normalized_sources.len() as f32 * 8.0;
+        score -= breakdown.source;
     }
-    score
+    breakdown.score = score;
+    breakdown
 }
 
 /// 原文标题是否像频道帖子而不是新闻标题：以表情或括号前缀开头、带“JUST IN”一类口播前缀、

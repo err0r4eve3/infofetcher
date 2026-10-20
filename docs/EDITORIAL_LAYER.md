@@ -43,7 +43,7 @@
 | `EDITORIAL_INTERVAL_SECONDS` | `600` | 扫描间隔 |
 | `EDITORIAL_DAILY_EVENT_LIMIT` | `600` | 24 小时内最多评审的事件数 |
 | `EDITORIAL_THRESHOLDS` | `world-news:5,tech-research:5,long-read:5` | 各 Profile 进入简报的最低分 |
-| `BRIEF_SECTION_SHARES` | `world:0.45,technology:0.3,business:0.3,security:0.2,general:0.25` | 栏目占简报条数的上限比例 |
+| `BRIEF_SECTION_SHARES` | `conflict:0.25,politics:0.25,society:0.2,disaster:0.15,economy:0.2,business:0.15,ai:0.2,tech:0.2,cyber:0.1,science:0.15,crypto:0.1,culture:0.1,general:0.15` | 栏目占简报条数的上限比例；软上限为其 60%。键必须是 13 个栏目之一，未知键启动时告警 |
 | `BRIEF_EDITION_HOUR` / `BRIEF_EDITION_UTC_OFFSET_HOURS` | `8` / `8` | 每日生成时间（本地时区） |
 | `BRIEF_FEED_TOKEN` | 空 | 设置后开放 `/feeds/brief.xml?token=` |
 | `BRIEF_WEBHOOK_URL` / `BRIEF_WEBHOOK_FORMAT` | 空 / `generic` | 每期推送，`feishu` 用飞书文本消息格式 |

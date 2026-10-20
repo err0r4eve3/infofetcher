@@ -53,7 +53,7 @@ services:
       EDITORIAL_INTERVAL_SECONDS: ${EDITORIAL_INTERVAL_SECONDS:-600}
       EDITORIAL_DAILY_EVENT_LIMIT: ${EDITORIAL_DAILY_EVENT_LIMIT:-600}
       EDITORIAL_THRESHOLDS: ${EDITORIAL_THRESHOLDS:-world-news:5,tech-research:5,long-read:5}
-      BRIEF_SECTION_SHARES: ${BRIEF_SECTION_SHARES:-world:0.45,technology:0.3,business:0.3,security:0.2,general:0.25}
+      BRIEF_SECTION_SHARES: ${BRIEF_SECTION_SHARES:-conflict:0.25,politics:0.25,society:0.2,disaster:0.15,economy:0.2,business:0.15,ai:0.2,tech:0.2,cyber:0.1,science:0.15,crypto:0.1,culture:0.1,general:0.15}
       BRIEF_EDITION_HOUR: ${BRIEF_EDITION_HOUR:-8}
       BRIEF_EDITION_UTC_OFFSET_HOURS: ${BRIEF_EDITION_UTC_OFFSET_HOURS:-8}
       BRIEF_FEED_TOKEN: ${BRIEF_FEED_TOKEN:-}

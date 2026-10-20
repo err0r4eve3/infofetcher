@@ -151,6 +151,12 @@ impl EditorialConfig {
             ))
             .into_iter()
             .map(|(key, value)| (key, value.clamp(0.0, 1.0)))
+            .inspect(|(key, _)| {
+                // 栏目细分后 compose 里的旧默认值（world、technology、security）静默失配了一天多。
+                if !crate::world::REPORT_SECTIONS.iter().any(|(section, _)| section == key) {
+                    tracing::warn!(section = %key, "BRIEF_SECTION_SHARES has an unknown section key");
+                }
+            })
             .collect(),
             edition_hour: env_u64("BRIEF_EDITION_HOUR", 8).min(23) as u32,
             edition_utc_offset_hours: env_i64("BRIEF_EDITION_UTC_OFFSET_HOURS", 8).clamp(-12, 14)
@@ -167,6 +173,18 @@ impl EditorialConfig {
 const DEFAULT_EDITORIAL_THRESHOLDS: &str = "world-news:5,tech-research:5,long-read:5";
 const DEFAULT_BRIEF_SECTION_SHARES: &str =
     "conflict:0.25,politics:0.25,society:0.2,disaster:0.15,economy:0.2,business:0.15,ai:0.2,tech:0.2,cyber:0.1,science:0.15,crypto:0.1,culture:0.1,general:0.15";
+
+#[cfg(test)]
+mod section_share_tests {
+    #[test]
+    fn default_section_shares_use_current_section_keys() {
+        for (key, _) in super::parse_number_map(super::DEFAULT_BRIEF_SECTION_SHARES) {
+            assert!(crate::world::REPORT_SECTIONS.iter().any(|(section, _)| *section == key), "{key}");
+        }
+        let compose = include_str!("../../../docker-compose.yml");
+        assert!(compose.contains(super::DEFAULT_BRIEF_SECTION_SHARES), "compose default must match");
+    }
+}
 
 /// 解析 `key:number,key:number`；格式错误的项直接忽略。
 fn parse_number_map(raw: &str) -> HashMap<String, f32> {
