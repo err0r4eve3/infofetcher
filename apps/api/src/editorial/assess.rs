@@ -22,7 +22,7 @@ use crate::{
     world::{self, AssessmentCandidate, HistoryRef},
 };
 
-pub const PROMPT_VERSION: &str = "editorial-assess-v1";
+pub const PROMPT_VERSION: &str = "editorial-assess-v2";
 const BATCH_SIZE: usize = 6;
 const MAX_BATCHES_PER_TURN: usize = 6;
 const LOOKBACK_HOURS: i64 = 24;
@@ -35,6 +35,7 @@ const HISTORY_GAP_HOURS: i64 = 2;
 const MAX_HISTORY_REFS: usize = 2;
 const MAX_OUTPUT_TOKENS: u32 = 12_000;
 const TEXT_LIMIT: usize = 240;
+const HEADLINE_LIMIT: usize = 40;
 
 /// 一个待评审事件的全部输入。
 #[derive(Debug, Clone)]
@@ -77,6 +78,8 @@ struct RawAssessment {
     history_note: String,
     community_note: String,
     takeaway: String,
+    section: String,
+    headline: String,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -90,6 +93,8 @@ struct ValidAssessment {
     history_refs: Vec<HistoryRef>,
     community_note: Option<String>,
     takeaway: Option<String>,
+    section: Option<&'static str>,
+    headline: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -576,6 +581,13 @@ fn validate(
     let takeaway = Some(clean_text(&raw.takeaway)).filter(|note| {
         !note.is_empty() && profiles::get(profile).is_some_and(|profile| profile.takeaway)
     });
+    let section = world::REPORT_SECTIONS
+        .iter()
+        .map(|(key, _)| *key)
+        .find(|key| *key == raw.section.trim());
+    let headline = Some(clean_text(&raw.headline))
+        .filter(|headline| !headline.is_empty())
+        .map(|headline| headline.chars().take(HEADLINE_LIMIT).collect::<String>());
     Some(ValidAssessment {
         profile,
         score: (raw.score * 10.0).round() as f32 / 10.0,
@@ -586,6 +598,8 @@ fn validate(
         history_refs,
         community_note,
         takeaway,
+        section,
+        headline,
     })
 }
 
@@ -603,8 +617,8 @@ async fn store_done(
         "INSERT INTO event_assessments (
            story_id, materials_hash, status, profile, score, reason, summary, tags,
            history_note, history_refs, community_note, takeaway, title, model,
-           prompt_version, error, attempts, first_seen_at, assessed_at
-         ) VALUES ($1, $2, 'done', $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, NULL, 0, $15, now())
+           prompt_version, error, attempts, first_seen_at, assessed_at, section, headline
+         ) VALUES ($1, $2, 'done', $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, NULL, 0, $15, now(), $16, $17)
          ON CONFLICT (story_id) DO UPDATE SET
            materials_hash = EXCLUDED.materials_hash, status = 'done', profile = EXCLUDED.profile,
            score = EXCLUDED.score, reason = EXCLUDED.reason, summary = EXCLUDED.summary,
@@ -612,7 +626,8 @@ async fn store_done(
            history_refs = EXCLUDED.history_refs, community_note = EXCLUDED.community_note,
            takeaway = EXCLUDED.takeaway, title = EXCLUDED.title, model = EXCLUDED.model,
            prompt_version = EXCLUDED.prompt_version, error = NULL, attempts = 0,
-           first_seen_at = EXCLUDED.first_seen_at, assessed_at = now()",
+           first_seen_at = EXCLUDED.first_seen_at, assessed_at = now(),
+           section = EXCLUDED.section, headline = EXCLUDED.headline",
     )
     .bind(input.story_id)
     .bind(&input.materials_hash)
@@ -629,6 +644,8 @@ async fn store_done(
     .bind(&state.config.llm_model)
     .bind(PROMPT_VERSION)
     .bind(input.first_seen_at)
+    .bind(valid.section)
+    .bind(&valid.headline)
     .execute(&state.pool)
     .await?;
     Ok(())
@@ -679,12 +696,23 @@ fn system_prompt() -> String {
 - history_ids 与 history_note：history_candidates 是本站更早的评审记录，只是候选，不是独立证实。只有能说明直接关系时才引用：同一产品的上一版本、同一事件的早期阶段、同一政策/价格/能力的有记录变化。共享公司、人物或宽泛话题（如 AI、中东局势）不够。最多引用 2 条；history_note 用一到两句写出之前记录了什么、现在有什么变化，日期写成“本站 X 月 X 日记录”，不要推断事件本身的日期。没有合适候选时 history_ids 为空数组、history_note 为空字符串，不要硬凑回顾。
 - community_note：只根据 comments，用一到两句概括最有价值的论点、分歧或亲历经验，写明这是评论者的观点，与已确认的事实分开。互动量不代表共识。没有实质讨论时为空字符串。
 - takeaway：只有 long-read 填写，一到两句写出可借鉴的方法、证据或结论及其适用条件；其他 Profile 为空字符串。
+- section：从栏目目录中选一个最贴切的键，按事件实质而不是出现的词选择（如加密算法、证书属于 cyber 或 tech，不属于 crypto；航天探测属于 science）。
+- headline：不超过 28 个汉字的中文短标题，写清谁做了什么，保留产品、机构、人名等专有名词，不用表情、栏目前缀、感叹或“重磅”“突发”这类词。
 - 所有文字用简体中文；产品、机构、人名等专有名词保留原文。每个输入事件都要输出一条，id 与输入一致。
 
 # Profile 目录
 
+{}
+
+# 栏目目录
+
 {}",
-        profiles::catalog()
+        profiles::catalog(),
+        world::REPORT_SECTIONS
+            .iter()
+            .map(|(key, label)| format!("- {key}：{label}"))
+            .collect::<Vec<_>>()
+            .join("\n")
     )
 }
 
@@ -711,11 +739,17 @@ fn assessment_schema(count: usize) -> Value {
                         "history_ids": { "type": "array", "items": text(12), "maxItems": MAX_HISTORY_REFS },
                         "history_note": text(TEXT_LIMIT),
                         "community_note": text(TEXT_LIMIT),
-                        "takeaway": text(TEXT_LIMIT)
+                        "takeaway": text(TEXT_LIMIT),
+                        "section": {
+                            "type": "string",
+                            "enum": world::REPORT_SECTIONS.iter().map(|(key, _)| *key).collect::<Vec<_>>()
+                        },
+                        "headline": text(HEADLINE_LIMIT)
                     },
                     "required": [
                         "id", "profile", "score", "reason", "summary", "tags",
-                        "history_ids", "history_note", "community_note", "takeaway"
+                        "history_ids", "history_note", "community_note", "takeaway",
+                        "section", "headline"
                     ],
                     "additionalProperties": false
                 }
@@ -771,7 +805,22 @@ mod tests {
             history_note: "本站 10 月 13 日记录了 0.9 版本".to_string(),
             community_note: "评论者质疑基准测试".to_string(),
             takeaway: "不该出现".to_string(),
+            section: "ai".to_string(),
+            headline: "vLLM 发布 1.0 版本".to_string(),
         }
+    }
+
+    #[test]
+    fn section_must_come_from_the_catalog() {
+        let valid = validate(raw(), &input(None, false), 0, 8).unwrap();
+        assert_eq!(valid.section, Some("ai"));
+        assert_eq!(valid.headline.as_deref(), Some("vLLM 发布 1.0 版本"));
+        let mut unknown = raw();
+        unknown.section = "markets".to_string();
+        unknown.headline = "  ".to_string();
+        let valid = validate(unknown, &input(None, false), 0, 8).unwrap();
+        assert_eq!(valid.section, None, "unknown keys fall back to keyword sections");
+        assert_eq!(valid.headline, None);
     }
 
     #[test]
@@ -876,7 +925,7 @@ mod tests {
     fn schema_requires_every_field() {
         let schema = assessment_schema(8);
         let item = &schema["properties"]["assessments"]["items"];
-        assert_eq!(item["required"].as_array().unwrap().len(), 10);
+        assert_eq!(item["required"].as_array().unwrap().len(), 12);
         assert_eq!(
             item["properties"]["profile"]["enum"]
                 .as_array()

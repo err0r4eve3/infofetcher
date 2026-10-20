@@ -140,6 +140,8 @@ struct Assessment {
     history_refs: Vec<HistoryRef>,
     community_note: Option<String>,
     takeaway: Option<String>,
+    section: Option<String>,
+    headline: Option<String>,
 }
 
 /// 等待 LLM 评审的候选事件。
@@ -188,6 +190,8 @@ pub struct EventBriefItem {
     pub(crate) takeaway: Option<String>,
     #[serde(skip_serializing)]
     below_editorial_threshold: bool,
+    #[serde(skip_serializing)]
+    awaiting_assessment: bool,
     #[serde(skip_serializing)]
     source_families: Vec<String>,
     #[serde(skip_serializing)]
@@ -766,7 +770,8 @@ async fn load_candidates(
                 ea.profile AS ea_profile, ea.score AS ea_score, ea.reason AS ea_reason,
                 ea.summary AS ea_summary, ea.tags AS ea_tags,
                 ea.history_note AS ea_history_note, ea.history_refs AS ea_history_refs,
-                ea.community_note AS ea_community_note, ea.takeaway AS ea_takeaway
+                ea.community_note AS ea_community_note, ea.takeaway AS ea_takeaway,
+                ea.section AS ea_section, ea.headline AS ea_headline
          FROM story_signals ss
          JOIN (
            SELECT story_id, ROUND(AVG(quality))::integer AS average_source_quality
@@ -858,6 +863,8 @@ fn assessment_from_row(row: &sqlx::postgres::PgRow) -> Option<Assessment> {
             .unwrap_or_default(),
         community_note: non_empty(row.get("ea_community_note")),
         takeaway: non_empty(row.get("ea_takeaway")),
+        section: non_empty(row.get("ea_section")),
+        headline: non_empty(row.get("ea_headline")),
     })
 }
 
@@ -961,13 +968,29 @@ fn score_candidate(
         candidate.summary_confidence.as_deref(),
     );
     let community_only = sources_are_community_only(&candidate.source_families);
-    let report_section = report_section(&candidate.title, &what_happened);
+    // 评审给出的栏目按事件实质判断，优先于关键词；旧评审没有栏目时回退关键词。
+    let report_section = assessment
+        .section
+        .as_deref()
+        .and_then(|section| REPORT_SECTIONS.iter().find(|(key, _)| *key == section))
+        .map_or_else(|| report_section(&candidate.title, &what_happened), |(key, _)| *key);
+    // 频道帖子的原文标题（表情前缀、“JUST IN:”、整段正文）换成评审写的短标题；正常标题保持原文。
+    let title = match assessment.headline.as_deref() {
+        Some(headline) if title_is_noisy(&candidate.title) => headline.to_string(),
+        _ => candidate.title,
+    };
+    // 评审开启时，单源事件要先过评审才进简报：评审名额用完后，未评审的单源条目只有关键词分，
+    // 实测会把“今天没什么新闻”、二手转让、招展广告带进报告后半段。多源事件和命中关注的不受影响。
+    let awaiting_assessment = editorial.enabled
+        && !assessed
+        && candidate.independent_source_count < 2
+        && watch_ids.is_empty();
 
     EventBriefItem {
         event_id: candidate.event_id,
         report_section: report_section.to_string(),
         revision_type: candidate.revision_type,
-        title: candidate.title,
+        title,
         what_happened,
         why_it_matters,
         why_now,
@@ -998,6 +1021,7 @@ fn score_candidate(
         community_note: assessment.community_note,
         takeaway: assessment.takeaway,
         below_editorial_threshold,
+        awaiting_assessment,
         community_only,
         content_hash: candidate.content_hash,
         url_hash: candidate.url_hash,
@@ -1057,6 +1081,9 @@ fn passes_evidence_gate(item: &EventBriefItem) -> bool {
     }
     // 评审判为低于 Profile 阈值的事件不进简报；命中关注的事件仍按原规则判断。
     if item.below_editorial_threshold && item.watch_ids.is_empty() {
+        return false;
+    }
+    if item.awaiting_assessment {
         return false;
     }
     if !item.watch_ids.is_empty()
@@ -1153,6 +1180,24 @@ fn selection_score(item: &EventBriefItem, selected: &[EventBriefItem], limit: us
         score -= repeated as f32 / normalized_sources.len() as f32 * 8.0;
     }
     score
+}
+
+/// 原文标题是否像频道帖子而不是新闻标题：以表情或括号前缀开头、带“JUST IN”一类口播前缀、
+/// 换行，或长到明显是整段正文。
+fn title_is_noisy(title: &str) -> bool {
+    let title = title.trim();
+    let Some(first) = title.chars().next() else {
+        return false;
+    };
+    if title.contains('\n') || !(first.is_alphanumeric() || "‘“'\"«".contains(first)) {
+        return true;
+    }
+    let upper = title.to_uppercase();
+    if ["JUST IN", "BREAKING", "WOW."].iter().any(|prefix| upper.starts_with(prefix)) {
+        return true;
+    }
+    let length = title.chars().count();
+    if title.chars().any(is_cjk) { length > 60 } else { length > 140 }
 }
 
 fn titles_same_brief_event(left: &str, right: &str) -> bool {
@@ -1842,7 +1887,7 @@ fn normalize_report_hours(hours: i64) -> i64 {
     if hours <= 12 { 12 } else { 24 }
 }
 
-fn report_limit(hours: i64) -> usize {
+pub(crate) fn report_limit(hours: i64) -> usize {
     if normalize_report_hours(hours) == 12 {
         60
     } else {
@@ -1893,11 +1938,17 @@ fn default_true() -> bool {
     true
 }
 
+/// 供其他模块测试构造入选条目。
+#[cfg(test)]
+pub(crate) fn test_item(title: &str, independent_source_count: i32) -> EventBriefItem {
+    tests::test_brief_item(title, 70, 70, 70, 70, independent_source_count, "Source")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn test_brief_item(
+    pub(super) fn test_brief_item(
         title: &str,
         total_score: i32,
         impact_score: i32,
@@ -1941,6 +1992,7 @@ mod tests {
             community_note: None,
             takeaway: None,
             below_editorial_threshold: false,
+            awaiting_assessment: false,
             community_only: false,
             content_hash: Uuid::new_v4().to_string(),
             url_hash: Uuid::new_v4().to_string(),
@@ -2129,6 +2181,54 @@ mod tests {
         let item = score_candidate(candidate, &[], &[], &EditorialConfig::default());
         assert!(item.below_editorial_threshold);
         assert!(!passes_evidence_gate(&item));
+    }
+
+    #[test]
+    fn assessment_section_and_headline_override_keywords() {
+        let mut candidate = plain_candidate("🖼 Go will reject certificate chains containing eight distrusted SPKIs");
+        candidate.assessment = Some(Assessment {
+            profile: "tech-research".to_string(),
+            score: 6.0,
+            reason: "影响使用 Go 标准库校验 TLS 的服务".to_string(),
+            summary: "Go 将拒绝含八个不受信任公钥的证书链".to_string(),
+            section: Some("cyber".to_string()),
+            headline: Some("Go 将拒绝八个不受信任公钥签发的证书链".to_string()),
+            ..Assessment::default()
+        });
+        let item = score_candidate(candidate.clone(), &[], &[], &EditorialConfig::default());
+        assert_eq!(item.report_section, "cyber");
+        assert_eq!(item.title, "Go 将拒绝八个不受信任公钥签发的证书链");
+
+        candidate.title = "Go will reject certificate chains containing eight distrusted SPKIs".to_string();
+        let item = score_candidate(candidate, &[], &[], &EditorialConfig::default());
+        assert_eq!(item.title, "Go will reject certificate chains containing eight distrusted SPKIs", "clean titles stay original");
+    }
+
+    #[test]
+    fn noisy_titles_are_social_posts_not_headlines() {
+        assert!(title_is_noisy("🖼 Anthropic宣布拟将公司5%股份投入公共利益基金"));
+        assert!(title_is_noisy("↩️ 多省份发生用户访问请求异常跳转至博彩网站事件"));
+        assert!(title_is_noisy("JUST IN: China announces new export restrictions on drones"));
+        assert!(title_is_noisy("[AINews] not much happened today"));
+        assert!(title_is_noisy(&"美国特使威特科夫正前往奥斯陆".repeat(5)));
+        assert!(!title_is_noisy("‘Open your doors for AI’: German chancellor urges businesses"));
+        assert!(!title_is_noisy("US bans DeepSeek from civilian agency IT systems"));
+        assert!(!title_is_noisy("日本 MMX 探测器升空，将赴火卫一采样"));
+    }
+
+    #[test]
+    fn unassessed_single_source_events_wait_for_review_when_editorial_is_on() {
+        let enabled = EditorialConfig { enabled: true, ..EditorialConfig::default() };
+        let mut candidate = plain_candidate("Military strikes close a major shipping route");
+        candidate.independent_source_count = 1;
+        let waiting = score_candidate(candidate.clone(), &[], &[], &enabled);
+        assert!(waiting.awaiting_assessment);
+        assert!(!passes_evidence_gate(&waiting));
+        let fallback = score_candidate(candidate.clone(), &[], &[], &EditorialConfig::default());
+        assert!(!fallback.awaiting_assessment, "keyword scoring still works without the editorial layer");
+        let mut multi = candidate;
+        multi.independent_source_count = 3;
+        assert!(!score_candidate(multi, &[], &[], &enabled).awaiting_assessment);
     }
 
     #[test]

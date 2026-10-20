@@ -21,6 +21,7 @@ use crate::{
 
 pub mod assess;
 pub mod community;
+pub mod dedup;
 pub mod edition;
 pub mod profiles;
 pub mod sources;
@@ -86,6 +87,14 @@ pub fn spawn(state: AppState) {
                     && let Err(error) = assess::run_turn(&state).await
                 {
                     tracing::warn!(%error, "editorial assessment turn failed");
+                }
+                // 评审写入摘要后再对入选列表去重：模型要看摘要才能认出换了说法的同一事件。
+                if state.config.editorial.enabled {
+                    match dedup::run_turn(&state).await {
+                        Ok(0) => {}
+                        Ok(merged) => tracing::info!(merged, "brief dedup finished"),
+                        Err(error) => tracing::warn!(%error, "brief dedup failed"),
+                    }
                 }
                 match crate::semantic::retry_failed_links(&state).await {
                     Ok(0) => {}
