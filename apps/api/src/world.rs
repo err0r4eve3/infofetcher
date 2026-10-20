@@ -967,7 +967,6 @@ fn score_candidate(
         candidate.independent_source_count,
         candidate.summary_confidence.as_deref(),
     );
-    let community_only = sources_are_community_only(&candidate.source_families);
     // 评审给出的栏目按事件实质判断，优先于关键词；旧评审没有栏目时回退关键词。
     let report_section = assessment
         .section
@@ -981,9 +980,11 @@ fn score_candidate(
     };
     // 评审开启时，单源事件要先过评审才进简报：评审名额用完后，未评审的单源条目只有关键词分，
     // 实测会把“今天没什么新闻”、二手转让、招展广告带进报告后半段。多源事件和命中关注的不受影响。
+    // 只有论坛来源的事件同理：同一帖子跨站转发会被算成两个独立来源。
+    let community_only = sources_are_community_only(&candidate.source_families);
     let awaiting_assessment = editorial.enabled
         && !assessed
-        && candidate.independent_source_count < 2
+        && (candidate.independent_source_count < 2 || community_only)
         && watch_ids.is_empty();
 
     EventBriefItem {
@@ -2229,6 +2230,9 @@ mod tests {
         let mut multi = candidate;
         multi.independent_source_count = 3;
         assert!(!score_candidate(multi, &[], &[], &enabled).awaiting_assessment);
+        let mut forum = plain_candidate("出山姆会员副卡");
+        forum.source_families = vec!["rsshub:v2ex/topics".to_string(), "nodeseek.com".to_string()];
+        assert!(score_candidate(forum, &[], &[], &enabled).awaiting_assessment, "cross-posted forum threads are not independent");
     }
 
     #[test]
