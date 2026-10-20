@@ -474,10 +474,10 @@ a {
   opacity: 0.74;
   transform: translate(-50%, -50%);
   transition:
-    border-color 140ms ease,
-    background 140ms ease,
-    height 140ms ease,
-    opacity 140ms ease;
+    border-color var(--motion-fast) ease,
+    background var(--motion-fast) ease,
+    height var(--motion-fast) ease,
+    opacity var(--motion-fast) ease;
 }
 
 .pane-resizer:hover::before,
@@ -801,7 +801,7 @@ a.secondary-button:hover,
 }
 
 .preset-row:active:not(:disabled) {
-  transform: scale(0.985);
+  background: var(--item-active);
 }
 
 .preset-row svg {
@@ -897,9 +897,10 @@ a.secondary-button:hover,
   color: var(--text-strong);
 }
 
+/* Full-width rows press with a tone, not a scale: scaling a wide row reads as a wobble. */
 .feed-row:active,
 .folder-row:active {
-  transform: scale(0.985);
+  background: var(--item-active);
 }
 
 .feed-row.active b,
@@ -1461,7 +1462,7 @@ a.secondary-button:hover,
 .keyword-check:has(input:checked) { color: var(--text-strong); }
 
 .keyword-check:active {
-  transform: scale(0.985);
+  background: var(--item-active);
 }
 
 .keyword-check input,
@@ -1837,8 +1838,8 @@ a.secondary-button:hover,
   border-radius: var(--radius-pill);
   background: transparent;
   transition:
-    background 140ms ease,
-    opacity 140ms ease;
+    background var(--motion-fast) ease,
+    opacity var(--motion-fast) ease;
 }
 
 .article-row:hover {
@@ -1851,7 +1852,7 @@ a.secondary-button:hover,
 }
 
 .article-row:active {
-  transform: scale(0.992);
+  background: var(--item-active);
 }
 
 .article-row.unread::before {
@@ -3745,7 +3746,7 @@ a.secondary-button:hover,
 
 .event-card:active,
 .wire-item:active {
-  transform: scale(0.995);
+  background: var(--item-active);
 }
 
 .event-card.active::before {

@@ -148,7 +148,7 @@
 }
 .event-drawer-close { width: 36px; padding: 0; }
 .event-drawer-bar button:hover { background: var(--item-hover); color: var(--text-strong); }
-.event-drawer-bar button:active { transform: scale(0.97); }
+.event-drawer-bar button:active { transform: scale(0.96); }
 .event-drawer-bar button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .event-drawer-body > * { animation: event-drawer-fade 200ms ease-out; }
 
