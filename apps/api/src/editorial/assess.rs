@@ -22,7 +22,7 @@ use crate::{
     world::{self, AssessmentCandidate, HistoryRef},
 };
 
-pub const PROMPT_VERSION: &str = "editorial-assess-v3";
+pub const PROMPT_VERSION: &str = "editorial-assess-v4";
 const BATCH_SIZE: usize = 6;
 const MAX_BATCHES_PER_TURN: usize = 6;
 const LOOKBACK_HOURS: i64 = 24;
@@ -692,7 +692,7 @@ fn system_prompt() -> String {
 - 只依据给定的事件内容和元数据。不得编造事实、名称、版本、日期、数字、引语、互动数据或来源；证据不完整时保留不确定性。
 - profile：按内容的形式和目的选择，不只看话题。fixed_profile 非空时必须使用它。
 - score：按所选 Profile 的评分标准给 0–10 分，可带一位小数。同一批事件使用同一把尺子。评分衡量事件本身的重要性，不衡量材料完整度：content 为空、只有导航或明显截断时，按标题、来源和独立来源数判断，不因正文缺失降分。
-- 汇总稿：把多条互不相关的新闻打包在一起的早报、简报、新闻快报、市场直播，不按其中某一条评分：score 不超过 3，section 用 general，headline 写成“某某 X 月 X 日新闻汇总”。围绕同一事件持续更新的直播不算汇总稿，按该事件评分。
+- 汇总稿：把多条互不相关的新闻打包在一起的早报、简报、新闻快报、市场直播，不按其中某一条评分：score 不超过 3，section 用 general，headline 写成“某某 X 月 X 日新闻汇总”。按标题判断：标题指向单一事件、单一公司或单一人物的稿件不算汇总稿，即使正文附带其他消息或日程，也按标题所指的事件评分；围绕同一事件持续更新的直播同样不算。
 - reason：读者看到的“为什么重要”。一句话，不超过 60 字，写受影响的对象和具体变化；不重要时写清影响为什么有限。只谈事件，不谈材料：不写正文是否截断、来源有几个、能否核实（可信度由系统另行显示），也不评论栏目或 Profile 的归属。不写“意义重大”“里程碑”“重塑行业”这类套话。
 - summary：一句话写清实际发生了什么、涉及谁，不超过 100 字。写事件本身，不描述页面、正文、推文或转载形式。区分已宣布的计划或宣称与已经发生、已上线或已独立证实的事实；宣称用“某方称”归属。
 - tags：3–5 个具体的话题标签。
