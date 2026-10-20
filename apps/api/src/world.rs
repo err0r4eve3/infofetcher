@@ -22,7 +22,9 @@ use crate::{
 mod evidence;
 use evidence::{EventEvidence, EvidenceScope};
 
-const MAX_CANDIDATES: i64 = 2_000;
+/// 只作安全边界：窗口过滤已限定范围。2026-10-20 现网 24 小时有 2,562 个事件簇，
+/// 原上限 2,000 按最近更新截断，把 17 小时以前的事件全部挡在报告外。
+const MAX_CANDIDATES: i64 = 5_000;
 const MIN_BRIEF_SCORE: i32 = 60;
 
 pub fn router() -> Router<AppState> {
@@ -1037,27 +1039,33 @@ fn select_diverse(
     section_shares: &HashMap<String, f32>,
 ) -> Vec<EventBriefItem> {
     items.retain(passes_evidence_gate);
+    // 标题只分词一次；与已选条目的最大相似度和重复判断随每次入选增量更新，
+    // 每轮只和新入选的一条比较。原实现每轮对全部候选 × 全部已选重新分词，
+    // 2026-10-20 现网约 1,900 个候选时简报接口耗时 14 秒。
+    let mut pool = items
+        .into_iter()
+        .map(|item| {
+            let tokens = brief_title_tokens(&item.title);
+            (item, tokens, 0.0_f32)
+        })
+        .collect::<Vec<_>>();
     let mut selected = Vec::<EventBriefItem>::with_capacity(limit);
     let mut section_counts = HashMap::<String, usize>::new();
-    while !items.is_empty() && selected.len() < limit {
-        items.retain(|item| {
-            let section_full = section_cap(&item.report_section, limit, section_shares)
-                .is_some_and(|cap| {
-                    section_counts.get(&item.report_section).copied().unwrap_or(0) >= cap
-                });
-            !section_full
-                && !selected.iter().any(|selected_item| {
-                    selected_item.content_hash == item.content_hash
-                        || selected_item.url_hash == item.url_hash
-                        || titles_same_brief_event(&selected_item.title, &item.title)
-                })
+    while !pool.is_empty() && selected.len() < limit {
+        pool.retain(|(item, _, _)| {
+            section_cap(&item.report_section, limit, section_shares).is_none_or(|cap| {
+                section_counts.get(&item.report_section).copied().unwrap_or(0) < cap
+            })
         });
-        let Some(best_index) = items
+        let Some(best_index) = pool
             .iter()
+            .map(|(item, _, max_similarity)| {
+                (selection_score_with(item, &selected, limit, *max_similarity), item)
+            })
             .enumerate()
-            .max_by(|(_, left), (_, right)| {
-                selection_score(left, &selected, limit)
-                    .total_cmp(&selection_score(right, &selected, limit))
+            .max_by(|(_, (left_score, left)), (_, (right_score, right))| {
+                left_score
+                    .total_cmp(right_score)
                     .then_with(|| left.total_score.cmp(&right.total_score))
                     .then_with(|| left.published_at.cmp(&right.published_at))
             })
@@ -1065,7 +1073,17 @@ fn select_diverse(
         else {
             break;
         };
-        let item = items.swap_remove(best_index);
+        let (item, tokens, _) = pool.swap_remove(best_index);
+        pool.retain_mut(|(candidate, candidate_tokens, max_similarity)| {
+            if candidate.content_hash == item.content_hash
+                || candidate.url_hash == item.url_hash
+                || token_sets_same_event(&tokens, candidate_tokens)
+            {
+                return false;
+            }
+            *max_similarity = max_similarity.max(token_set_similarity(&tokens, candidate_tokens));
+            true
+        });
         *section_counts.entry(item.report_section.clone()).or_default() += 1;
         selected.push(item);
     }
@@ -1114,7 +1132,22 @@ fn passes_evidence_gate(item: &EventBriefItem) -> bool {
     item.total_score >= 68 && item.impact_score >= 65 && item.confidence_score >= 40
 }
 
+#[cfg(test)]
 fn selection_score(item: &EventBriefItem, selected: &[EventBriefItem], limit: usize) -> f32 {
+    let max_similarity = selected
+        .iter()
+        .map(|selected_item| brief_title_similarity(&selected_item.title, &item.title))
+        .fold(0.0_f32, f32::max);
+    selection_score_with(item, selected, limit, max_similarity)
+}
+
+/// `max_similarity` 是条目标题与已选条目标题的最大 Jaccard 相似度，由调用方增量维护。
+fn selection_score_with(
+    item: &EventBriefItem,
+    selected: &[EventBriefItem],
+    limit: usize,
+    max_similarity: f32,
+) -> f32 {
     let mut score = item.total_score as f32;
     if item.independent_source_count >= 2 {
         score += 4.0;
@@ -1135,10 +1168,6 @@ fn selection_score(item: &EventBriefItem, selected: &[EventBriefItem], limit: us
         return score;
     }
 
-    let max_similarity = selected
-        .iter()
-        .map(|selected_item| brief_title_similarity(&selected_item.title, &item.title))
-        .fold(0.0_f32, f32::max);
     score -= max_similarity * 22.0;
 
     let topic = item.report_section.as_str();
@@ -1203,24 +1232,29 @@ fn title_is_noisy(title: &str) -> bool {
     if title.chars().any(is_cjk) { length > 60 } else { length > 140 }
 }
 
+#[cfg(test)]
 fn titles_same_brief_event(left: &str, right: &str) -> bool {
-    let left = brief_title_tokens(left);
-    let right = brief_title_tokens(right);
+    token_sets_same_event(&brief_title_tokens(left), &brief_title_tokens(right))
+}
+
+fn token_sets_same_event(left: &HashSet<String>, right: &HashSet<String>) -> bool {
     if left.len() < 3 || right.len() < 3 {
         return false;
     }
-    let shared = left.intersection(&right).count();
-    let union = left.union(&right).count();
+    let shared = left.intersection(right).count();
+    let union = left.union(right).count();
     shared >= 3 && shared as f32 / union.max(1) as f32 >= 0.20
 }
 
 fn brief_title_similarity(left: &str, right: &str) -> f32 {
-    let left = brief_title_tokens(left);
-    let right = brief_title_tokens(right);
+    token_set_similarity(&brief_title_tokens(left), &brief_title_tokens(right))
+}
+
+fn token_set_similarity(left: &HashSet<String>, right: &HashSet<String>) -> f32 {
     if left.is_empty() || right.is_empty() {
         return 0.0;
     }
-    left.intersection(&right).count() as f32 / left.union(&right).count().max(1) as f32
+    left.intersection(right).count() as f32 / left.union(right).count().max(1) as f32
 }
 
 fn preference_delta(candidate: &Candidate, preferences: &[PreferenceSignal]) -> i32 {
@@ -2341,6 +2375,75 @@ mod tests {
         assert_eq!(twelve_hours, 71);
         assert_eq!(one_day, 50);
         assert!(freshness_score(12.0, 2, "UPDATE") > twelve_hours);
+    }
+
+    /// 增量实现必须与逐轮全量比较的原实现选出同样的条目和顺序。
+    #[test]
+    fn incremental_selection_matches_full_rescan() {
+        fn reference(
+            mut items: Vec<EventBriefItem>,
+            limit: usize,
+            shares: &HashMap<String, f32>,
+        ) -> Vec<Uuid> {
+            items.retain(passes_evidence_gate);
+            let mut selected = Vec::<EventBriefItem>::new();
+            let mut counts = HashMap::<String, usize>::new();
+            while !items.is_empty() && selected.len() < limit {
+                items.retain(|item| {
+                    let full = section_cap(&item.report_section, limit, shares)
+                        .is_some_and(|cap| counts.get(&item.report_section).copied().unwrap_or(0) >= cap);
+                    !full
+                        && !selected.iter().any(|chosen| {
+                            chosen.content_hash == item.content_hash
+                                || chosen.url_hash == item.url_hash
+                                || titles_same_brief_event(&chosen.title, &item.title)
+                        })
+                });
+                let Some(best) = items
+                    .iter()
+                    .enumerate()
+                    .max_by(|(_, l), (_, r)| {
+                        selection_score(l, &selected, limit)
+                            .total_cmp(&selection_score(r, &selected, limit))
+                            .then_with(|| l.total_score.cmp(&r.total_score))
+                            .then_with(|| l.published_at.cmp(&r.published_at))
+                    })
+                    .map(|(index, _)| index)
+                else {
+                    break;
+                };
+                let item = items.swap_remove(best);
+                *counts.entry(item.report_section.clone()).or_default() += 1;
+                selected.push(item);
+            }
+            selected.into_iter().map(|item| item.event_id).collect()
+        }
+        let words = [
+            "France", "curfew", "riots", "Paris", "Ukraine", "Zelenskyy", "Trump", "sanctions",
+            "Russia", "Bitcoin", "ETF", "BlackRock", "Apple", "launch", "October", "Sudan",
+            "drone", "attack", "Kenya", "Ebola", "Alberta", "referendum", "Canada", "AI", "chip",
+            "Nvidia", "election", "Brazil", "court", "Meta",
+        ];
+        let mut seed = 42_u64;
+        let mut next = || {
+            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            (seed >> 33) as usize
+        };
+        let items = (0..400)
+            .map(|index| {
+                let title = (0..5).map(|_| words[next() % words.len()]).collect::<Vec<_>>().join(" ");
+                let mut item = test_brief_item(&title, 55 + (next() % 40) as i32, 70, 70, 70, 1 + (next() % 4) as i32, &format!("Source {}", next() % 12));
+                item.published_at = Utc::now() - chrono::Duration::minutes(index);
+                item
+            })
+            .collect::<Vec<_>>();
+        let shares = HashMap::from([("conflict".to_string(), 0.2), ("politics".to_string(), 0.25)]);
+        let fast = select_diverse(items.clone(), 60, &shares)
+            .into_iter()
+            .map(|item| item.event_id)
+            .collect::<Vec<_>>();
+        assert!(fast.len() > 10);
+        assert_eq!(fast, reference(items, 60, &shares));
     }
 
     #[test]
