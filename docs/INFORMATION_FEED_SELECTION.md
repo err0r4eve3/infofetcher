@@ -189,3 +189,18 @@ Do not use non-clicks as negative feedback until exposure logging and off-policy
 - [YouTube: recommendation satisfaction and authoritative information](https://blog.youtube/inside-youtube/on-youtubes-recommendation-system/)
 - [Reddit: candidate filtering, ranking, and diversity](https://support.reddithelp.com/hc/en-us/articles/23511859482388-Reddit-s-Approach-to-Content-Recommendations)
 - [Yahoo Research: contextual-bandit news recommendation](https://arxiv.org/abs/1003.0146)
+
+## Source update (2026-10-20)
+
+Reference: an AI source list shared on X (snwiki238337, 2026-10-20). Only research and primary-reporting sources were taken; tool directories, tutorial YouTube channels, podcasts and promotional newsletters were skipped. All candidates were requested from the production host.
+
+| Added to production | First fetch |
+| --- | --- |
+| Import AI, Interconnects, SemiAnalysis, Latent Space (AI 研究) | 20 items each |
+| ChinaTalk, THE DECODER, 量子位 via RSSHub `qbitai/category/资讯` (科技媒体) | 20 / 10 / 10 |
+| The Batch via RSSHub `deeplearning/the-batch` (AI 研究) | 16 |
+| X `x-ai-voices`: Hassabis, LeCun, Andrew Ng, Sutskever, Hinton, Bengio, AI at Meta, Runway, Chubby, Rohan Paul, Xudong Han | 60 |
+
+Rejected: 机器之心 RSSHub routes (404), GitHub Trending (503), a16z feed (404), Meta AI blog route (latest item July 2026), Hugging Face Blog (feed returns 882 historical items and the first fetch does not filter by age), aggregators with heavy overlap (TLDR AI, AIbase).
+
+Fix found during this update: `POST /api/feeds` and `POST /api/social-sources` panicked since the editorial layer, because their `RETURNING` lists lacked `editorial_profile` and `quality_assessed_events`. The insert committed before the panic, so the client saw an error while the feed was created. Rollback suffix `before-sources-20261020T035334Z`; env backup `.env.homeserver.before-xvoices-20261020T034944Z`.
