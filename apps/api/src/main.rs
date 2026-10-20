@@ -115,6 +115,20 @@ async fn main() -> anyhow::Result<()> {
             tracing::info!(assessed, feeds, "editorial turn completed");
             Ok(())
         }
+        "explain-brief" => {
+            let hours = std::env::var("EXPLAIN_HOURS")
+                .ok()
+                .and_then(|value| value.parse().ok())
+                .unwrap_or(24);
+            let ids = std::env::args()
+                .skip(2)
+                .map(|value| value.parse::<uuid::Uuid>())
+                .collect::<Result<Vec<_>, _>>()?;
+            for line in world::explain_brief(&state, hours, &ids).await? {
+                println!("{line}");
+            }
+            Ok(())
+        }
         "publish-brief-edition" => {
             let date = chrono::Utc::now()
                 .with_timezone(&editorial::edition::local_offset(&state.config))

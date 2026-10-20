@@ -1034,11 +1034,27 @@ fn score_candidate(
 }
 
 fn select_diverse(
-    mut items: Vec<EventBriefItem>,
+    items: Vec<EventBriefItem>,
     limit: usize,
     section_shares: &HashMap<String, f32>,
 ) -> Vec<EventBriefItem> {
-    items.retain(passes_evidence_gate);
+    select_diverse_traced(items, limit, section_shares, &mut |_, _| {})
+}
+
+/// `on_drop` 收到每个落选条目和原因，供 `explain-brief` 排查“为什么没进报告”。
+fn select_diverse_traced(
+    mut items: Vec<EventBriefItem>,
+    limit: usize,
+    section_shares: &HashMap<String, f32>,
+    on_drop: &mut dyn FnMut(&EventBriefItem, String),
+) -> Vec<EventBriefItem> {
+    items.retain(|item| {
+        let pass = passes_evidence_gate(item);
+        if !pass {
+            on_drop(item, "未过证据门槛".to_string());
+        }
+        pass
+    });
     // 标题只分词一次；与已选条目的最大相似度和重复判断随每次入选增量更新，
     // 每轮只和新入选的一条比较。原实现每轮对全部候选 × 全部已选重新分词，
     // 2026-10-20 现网约 1,900 个候选时简报接口耗时 14 秒。
@@ -1053,9 +1069,13 @@ fn select_diverse(
     let mut section_counts = HashMap::<String, usize>::new();
     while !pool.is_empty() && selected.len() < limit {
         pool.retain(|(item, _, _)| {
-            section_cap(&item.report_section, limit, section_shares).is_none_or(|cap| {
+            let open = section_cap(&item.report_section, limit, section_shares).is_none_or(|cap| {
                 section_counts.get(&item.report_section).copied().unwrap_or(0) < cap
-            })
+            });
+            if !open {
+                on_drop(item, format!("栏目 {} 已满（第 {} 轮）", item.report_section, selected.len()));
+            }
+            open
         });
         let Some(best_index) = pool
             .iter()
@@ -1075,10 +1095,17 @@ fn select_diverse(
         };
         let (item, tokens, _) = pool.swap_remove(best_index);
         pool.retain_mut(|(candidate, candidate_tokens, max_similarity)| {
-            if candidate.content_hash == item.content_hash
-                || candidate.url_hash == item.url_hash
-                || token_sets_same_event(&tokens, candidate_tokens)
-            {
+            let reason = if candidate.content_hash == item.content_hash {
+                Some("正文哈希相同")
+            } else if candidate.url_hash == item.url_hash {
+                Some("链接哈希相同")
+            } else if token_sets_same_event(&tokens, candidate_tokens) {
+                Some("标题判为同一事件")
+            } else {
+                None
+            };
+            if let Some(reason) = reason {
+                on_drop(candidate, format!("{reason}：{}", item.title));
                 return false;
             }
             *max_similarity = max_similarity.max(token_set_similarity(&tokens, candidate_tokens));
@@ -1087,7 +1114,56 @@ fn select_diverse(
         *section_counts.entry(item.report_section.clone()).or_default() += 1;
         selected.push(item);
     }
+    for (item, _, max_similarity) in &pool {
+        on_drop(
+            item,
+            format!(
+                "名额已满，最终挑选分 {:.1}",
+                selection_score_with(item, &selected, limit, *max_similarity)
+            ),
+        );
+    }
     selected
+}
+
+/// 运维排查：给定事件为什么进或没进 `hours` 小时报告。只读。
+pub(crate) async fn explain_brief(state: &AppState, hours: i64, ids: &[Uuid]) -> AppResult<Vec<String>> {
+    let editorial = &state.config.editorial;
+    let watches = enabled_watches(state).await?;
+    let preferences = load_preference_signals(state).await?;
+    let ranked = load_candidates(state, hours, None)
+        .await?
+        .into_iter()
+        .map(|candidate| score_candidate(candidate, &watches, &preferences, editorial))
+        .collect::<Vec<_>>();
+    let mut lines = vec![format!("候选 {} 个", ranked.len())];
+    let wanted = ids.iter().copied().collect::<HashSet<_>>();
+    for item in ranked.iter().filter(|item| wanted.contains(&item.event_id)) {
+        lines.push(format!(
+            "{} 总分 {} 评审 {:?} 栏目 {} 独立来源 {} | {}",
+            item.event_id, item.total_score, item.editorial_score, item.report_section,
+            item.independent_source_count, item.title
+        ));
+    }
+    for id in ids.iter().filter(|id| !ranked.iter().any(|item| item.event_id == **id)) {
+        lines.push(format!("{id} 不在候选集"));
+    }
+    let mut drops = Vec::new();
+    let selected = select_diverse_traced(
+        ranked,
+        report_limit(hours),
+        &editorial.section_shares,
+        &mut |item, reason| {
+            if wanted.contains(&item.event_id) {
+                drops.push(format!("{} 落选：{reason}", item.event_id));
+            }
+        },
+    );
+    lines.extend(drops);
+    for (rank, item) in selected.iter().enumerate().filter(|(_, item)| wanted.contains(&item.event_id)) {
+        lines.push(format!("{} 入选第 {}", item.event_id, rank + 1));
+    }
+    Ok(lines)
 }
 
 /// 栏目硬上限：留下刚好够读的量，让热门栏目给其他栏目留位置。未配置的栏目不设上限。
