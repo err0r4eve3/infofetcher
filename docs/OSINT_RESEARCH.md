@@ -104,5 +104,6 @@ cargo test -p infofetcher-api research_roundtrip_with_postgres -- --ignored
 - 隔离 PostgreSQL 的调查/档案/队列回归通过，包括冻结输入、保存、导出、取消/重试与原事件清理后的回读。本机缺少 pgcrypto/pg_trgm，测试建表跳过这两个扩展及 trigram 索引，不代表完整生产迁移。
 - 真实公网：GDELT 一次返回 3 个候选，复测返回 429；正文读取两次成功，生成 1,946 字符快照并通过引用定位/哈希检查。搜索限流作为 unavailable 保留，不能宣称持续可用。
 - SearXNG 以本地 HTTP 合约测试验证 JSON 查询、限流和不跟随重定向；未配置真实实例进行全网检索验收。
+- 2026-10-21：GDELT DOC API 对 OVH 和本机出口的首个请求即返回 429（8–10 秒才回，偶发 200 也为空 `{}`），属服务端统一限流，客户端降频无效。生产改用自建 SearXNG（`docker-compose.homeserver.yml` 的 `searxng` 服务，仅监听 `127.0.0.1:18183`，引擎配置 `deploy/searxng/settings.yml`）。真实调查“开心果 涨价 伊朗 关税”：provider=searxng，2 轮检索、20 个候选、读取 2 篇相关正文。OVH 出口下 Google CSE 稳定，Brave 连续查询会限流，DuckDuckGo/Wikipedia/Bing/Qwant 不可用已关闭。
 - 使用 Playwright（无独立 Browser skill/runtime）在本地开发页面、模拟 API 数据下检查 1280×960 和 390×844：默认联网、切回本地、旧报告读取、候选/正文/引用区分、引用跳转正文快照、429 后恢复均通过，无应用运行时错误或横向溢出。这是前端交互证据，不代替线上端到端验证。
 - 未部署、未触发生产调查，也未验证模型语义核验；本版不调用模型。

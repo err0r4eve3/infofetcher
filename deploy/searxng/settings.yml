@@ -1,0 +1,28 @@
+# OSINT 联网检索用的 SearXNG（只监听 127.0.0.1，供 api 调用）。
+# secret_key 由环境变量 SEARXNG_SECRET 覆盖。
+# 引擎取舍按 2026-10-21 在 OVH 出口实测：Google CSE 稳定；Brave 连续查询会限流；
+# DuckDuckGo 出验证码、Wikipedia 限流、Bing 无结果、Qwant 拒绝访问，均关闭，
+# 否则它们常驻 unresponsive_engines，会把正常的空结果误判成服务不可用。
+use_default_settings: true
+
+server:
+  limiter: false
+  image_proxy: false
+  public_instance: false
+
+search:
+  formats: [html, json]
+
+engines:
+  - name: duckduckgo
+    disabled: true
+  - name: wikipedia
+    disabled: true
+  - name: bing
+    disabled: true
+  - name: qwant
+    disabled: true
+  - name: mojeek
+    disabled: false
+  - name: startpage
+    disabled: false
