@@ -57,10 +57,12 @@ services:
     mem_limit: 512m
 
   postgres:
+    restart: unless-stopped
     ports: !override
       - "127.0.0.1:${HOST_PG_PORT:-15432}:5432"
 
   api:
+    restart: unless-stopped
     build:
       dockerfile: apps/api/Dockerfile.homeserver
     network_mode: host
