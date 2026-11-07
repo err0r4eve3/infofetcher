@@ -5,7 +5,6 @@ import {
   BookOpen,
   CheckCircle2,
   ChartNoAxesCombined,
-  ChevronDown,
   Clock3,
   Compass,
   Eye,
@@ -29,6 +28,7 @@ import {
   XCircle
 } from 'lucide-react'
 import { FormEvent, lazy, memo, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { ArticleReader, type ReadingList } from './ArticleReader'
 import { OsintPanel } from './OsintPanel'
 import { ReportFilterControls } from './ReportFilterControls'
 import { EMPTY_REPORT_FILTERS, filterReportItems, hasReportFilters, type ReportFilters } from './reportFilters'
@@ -203,6 +203,7 @@ export function WorldRadar({
   const inspectorRef = useRef<HTMLElement>(null)
   const drawerOpenerRef = useRef<HTMLElement | null>(null)
   const [drawerOpen, setDrawerOpen] = useState(false)
+  const [reading, setReading] = useState<ReadingList | null>(null)
   const eventFeedRef = useRef<HTMLElement>(null)
   const selectedCardRef = useRef<HTMLButtonElement | null>(null)
   const selectedArticleId = brief?.items.find((item) => item.event_id === selectedEventId)?.representative_article_id
@@ -740,7 +741,7 @@ export function WorldRadar({
         saving={saving}
         saved={savedEventIds.has(detail.event.event_id)}
         tracked={watches.some((watch) => watch.enabled && watch.query.trim().toLocaleLowerCase() === detail.event.title.trim().toLocaleLowerCase())}
-        onOpenArticle={(articleId) => onOpenLibrary(undefined, articleId)}
+        onOpenArticle={(articleId, ids) => setReading({ ids, index: Math.max(0, ids.indexOf(articleId)) })}
         onFeedback={sendFeedback}
         onRegenerate={regenerateDigest}
         onToggleSaved={() => toggleSavedEvent(detail.event)}
@@ -840,14 +841,13 @@ export function WorldRadar({
                 <button type="button" aria-pressed={reportLayout === 'list'} onClick={() => changeReportLayout('list')}>列表</button>
                 <button type="button" aria-pressed={reportLayout === 'board'} onClick={() => changeReportLayout('board')}>态势</button>
               </div>
-              <label className="report-period">
-                <Clock3 size={17} aria-hidden="true" />
-                <select aria-label="报告覆盖范围" value={reportHours} onChange={(event) => setReportHours(Number(event.target.value))}>
-                  <option value={24}>近 24 小时</option>
-                  <option value={12}>近 12 小时</option>
-                </select>
-                <ChevronDown size={14} aria-hidden="true" />
-              </label>
+              <div className="report-period" role="group" aria-label="报告覆盖范围">
+                {[24, 12].map((hours) => (
+                  <button type="button" key={hours} aria-pressed={reportHours === hours} onClick={() => setReportHours(hours)}>
+                    {hours} 小时
+                  </button>
+                ))}
+              </div>
             </div>
             <div className="report-heading-actions">
               {brief && (
@@ -1099,6 +1099,12 @@ export function WorldRadar({
           </section>
         </main>
       )}
+      <ArticleReader
+        list={reading}
+        onClose={() => setReading(null)}
+        onNavigate={(index) => setReading((current) => (current ? { ...current, index } : current))}
+        onOpenLibrary={(articleId) => { setReading(null); onOpenLibrary(undefined, articleId) }}
+      />
     </div>
   )
 }
@@ -1208,7 +1214,7 @@ function EventInspector({
   saving: boolean
   saved: boolean
   tracked: boolean
-  onOpenArticle: (articleId: string) => void
+  onOpenArticle: (articleId: string, ids: string[]) => void
   onFeedback: (kind: 'more' | 'less' | 'known' | 'irrelevant' | 'bad_cluster') => Promise<void>
   onRegenerate: () => Promise<void>
   onToggleSaved: () => void

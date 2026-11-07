@@ -3257,32 +3257,41 @@ a.secondary-button:hover,
 }
 
 .report-period {
-  position: relative;
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  min-width: 0;
+  gap: 2px;
+  padding: 3px;
+  border-radius: var(--radius-control);
+  background: var(--input-bg, var(--surface-muted));
+  box-shadow: inset 0 0 0 1px var(--line-soft);
+}
+
+.report-period button {
+  min-height: 32px;
+  padding: 0 11px;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 13px;
+  font-weight: 500;
+  white-space: nowrap;
+  transition: background var(--motion-fast) ease, color var(--motion-fast) ease, box-shadow var(--motion-fast) ease;
+}
+
+.report-period button:hover {
   color: var(--text-strong);
 }
 
-.report-period select {
-  appearance: none;
-  min-height: 44px;
-  padding: 0 22px 0 0;
-  border: 0;
-  border-radius: var(--radius-row);
-  background: transparent;
-  color: inherit;
-  font-size: 16px;
+.report-period button[aria-pressed="true"] {
+  background: var(--layer-focus);
+  color: var(--text-strong);
   font-weight: 600;
-  cursor: pointer;
+  box-shadow: 0 0 0 1px var(--line-soft), 0 1px 2px oklch(0 0 0 / 0.08);
 }
 
-.report-period > svg:last-child {
-  position: absolute;
-  right: 2px;
-  pointer-events: none;
-  color: var(--text-soft);
+.report-period button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
 }
 
 .report-heading-actions {

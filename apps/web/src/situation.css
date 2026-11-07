@@ -75,8 +75,7 @@
 @media (max-width: 760px) {
   .report-view-controls { gap: 10px; }
   .report-layout-toggle button { padding-inline: 8px; }
-  .report-view-controls .report-period select { font-size: 13px; }
-  .report-view-controls .report-period > svg:first-child { display: none; }
+  .report-period button { padding-inline: 8px; }
   .situation-board { grid-template-columns: minmax(0, 1fr); gap: 12px; margin-top: 10px; }
   .situation-topics { padding: 4px; }
   .situation-topics h2, .situation-scope { display: none; }

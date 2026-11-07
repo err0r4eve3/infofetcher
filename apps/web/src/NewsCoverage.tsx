@@ -15,7 +15,7 @@ export function SourceCoverage({ item }: { item: EventBriefItem }) {
 
 export function EvidenceComparison({ detail, onOpenArticle }: {
   detail: EventDetail
-  onOpenArticle: (id: string) => void
+  onOpenArticle: (id: string, ids: string[]) => void
 }) {
   const [source, setSource] = useState('')
   const [order, setOrder] = useState<EvidenceOrder>('latest')
@@ -75,7 +75,7 @@ export function EvidenceComparison({ detail, onOpenArticle }: {
             </dl>
           </details>}
           <footer><span title="材料质量分用于排序，不代表陈述真实">材料质量 {item.quality_score}</span>
-            <button type="button" onClick={() => onOpenArticle(item.article_id)} aria-label={`阅读全文：${item.title}`}>阅读全文</button>
+            <button type="button" onClick={() => onOpenArticle(item.article_id, evidence.map((entry) => entry.article_id))} aria-label={`阅读全文：${item.title}`}>阅读全文</button>
           </footer>
         </article>)}
       </div>
