@@ -22,7 +22,7 @@ use crate::{
     world::{self, AssessmentCandidate, HistoryRef},
 };
 
-pub const PROMPT_VERSION: &str = "editorial-assess-v4";
+pub const PROMPT_VERSION: &str = "editorial-assess-v5";
 const BATCH_SIZE: usize = 6;
 const MAX_BATCHES_PER_TURN: usize = 6;
 const LOOKBACK_HOURS: i64 = 24;
@@ -713,7 +713,13 @@ fn system_prompt() -> String {
         profiles::catalog(),
         world::REPORT_SECTIONS
             .iter()
-            .map(|(key, label)| format!("- {key}：{label}"))
+            .map(|(key, label)| {
+                let guide = world::SECTION_GUIDE
+                    .iter()
+                    .find(|(guide_key, _)| guide_key == key)
+                    .map_or("", |(_, guide)| guide);
+                format!("- {key}：{label}。{guide}")
+            })
             .collect::<Vec<_>>()
             .join("\n")
     )

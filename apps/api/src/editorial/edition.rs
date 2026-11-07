@@ -552,8 +552,8 @@ mod tests {
             120,
             "https://x.test/",
         );
-        let conflict = markdown.find("## 战争与冲突").unwrap();
-        let politics = markdown.find("## 政治与外交").unwrap();
+        let conflict = markdown.find("## 地缘与安全").unwrap();
+        let politics = markdown.find("## 各国政治").unwrap();
         let tech = markdown.find("## 科技与产品").unwrap();
         let other = markdown.find("## 其他").unwrap();
         assert!(conflict < politics && politics < tech && tech < other);
@@ -620,7 +620,7 @@ mod tests {
         };
         let text = push_text(&edition, "https://x.test");
         assert!(text.starts_with("信息简报 · 2026-10-16（12 条）"));
-        assert!(text.contains("10. [政治与外交] 事件 9"), "legacy world key maps to politics");
+        assert!(text.contains("10. [各国政治] 事件 9"), "legacy world key maps to politics");
         assert!(!text.contains("事件 10\n"));
         assert!(text.ends_with("另有 2 条见完整简报。"));
     }

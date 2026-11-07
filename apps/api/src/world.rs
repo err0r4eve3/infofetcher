@@ -417,7 +417,10 @@ fn source_count_bucket(count: i32) -> &'static str {
         ..=1 => "1",
         2 => "2",
         3..=4 => "3-4",
-        _ => "5+",
+        // 突发大事件来源会从 5 涨到十几个，早期评审写不到后续定性（克拉科夫枪击 5 源时评审，
+        // 之后才被定为恐袭），10 源再评一次。
+        5..=9 => "5-9",
+        _ => "10+",
     }
 }
 
@@ -1668,8 +1671,8 @@ fn confidence_label(score: i32, sources: i32, summary_confidence: Option<&str>) 
 
 /// 报告栏目，顺序即展示顺序，也是同分时的优先顺序。前端和日报使用同一组键。
 pub(crate) const REPORT_SECTIONS: &[(&str, &str)] = &[
-    ("conflict", "战争与冲突"),
-    ("politics", "政治与外交"),
+    ("conflict", "地缘与安全"),
+    ("politics", "各国政治"),
     ("society", "社会与民生"),
     ("disaster", "灾害与事故"),
     ("economy", "宏观与市场"),
@@ -1683,6 +1686,24 @@ pub(crate) const REPORT_SECTIONS: &[(&str, &str)] = &[
     ("general", "其他"),
 ];
 
+/// 给评审模型的栏目说明。只有标签时，模型把美伊谈判、峰会这类外交新闻放进“战争与冲突”，
+/// 把恐怖袭击放进“社会与民生”（2026-11-07 克拉科夫枪击）。
+pub(crate) const SECTION_GUIDE: &[(&str, &str)] = &[
+    ("conflict", "战争与军事行动、国家之间的关系、外交谈判与峰会、制裁、恐怖袭击与重大政治暴力"),
+    ("politics", "一国内部的政治：选举、政府与人事、立法、司法裁决、政党与政局"),
+    ("society", "抗议、治安与普通刑事案件、移民、教育、住房、民生"),
+    ("disaster", "自然灾害、空难、交通与工业事故"),
+    ("economy", "宏观经济、央行、金融市场、能源与大宗商品、贸易"),
+    ("business", "公司经营、财报、并购、裁员、产业动态"),
+    ("ai", "AI 模型、产品、研究与政策"),
+    ("tech", "AI 以外的科技产品、芯片、软件与平台"),
+    ("cyber", "漏洞、攻击、数据泄露与网络安全政策"),
+    ("science", "科学研究、航天、医疗与公共卫生"),
+    ("crypto", "加密资产、交易所、链上事件与监管"),
+    ("culture", "体育、影视、音乐、艺术与名人"),
+    ("general", "以上都不合适，或多条新闻的汇总稿"),
+];
+
 /// 各栏目的信号词。英文按词匹配并接受常见词尾（riots、rioting、curfews），中文按子串匹配。
 /// 词有歧义时宁可不收：例如 gas（催泪瓦斯）、who（疑问词）、币（人民币）。
 const SECTION_MARKERS: &[(&str, &[&str])] = &[
@@ -1691,23 +1712,24 @@ const SECTION_MARKERS: &[(&str, &[&str])] = &[
         "soldier", "ceasefire", "truce", "shelling", "invasion", "invade", "offensive",
         "militant", "hamas", "hezbollah", "houthi", "idf", "nato", "gaza", "frontline",
         "combat", "bombing", "artillery", "insurgent", "rebel", "weapon", "strike", "attack",
-        "defence", "defense",
+        "defence", "defense", "terror", "terrorist", "terrorism", "diplomat", "diplomatic",
+        "diplomacy", "summit", "sanction", "treaty", "ambassador", "envoy", "kremlin",
+        "nuclear",
+        "外交", "峰会", "制裁", "条约", "大使", "特使", "外长", "会晤", "克里姆林宫", "联合国",
+        "恐袭", "恐怖", "核谈判",
         "战争", "战事", "空袭", "袭击", "导弹", "无人机", "军事", "军方", "部队", "士兵", "停火",
         "炮击", "入侵", "武装", "前线", "交火", "轰炸", "胡塞", "哈马斯", "真主党", "北约", "加沙",
         "以军", "俄军", "乌军",
     ]),
     ("politics", &[
         "election", "vote", "voting", "voter", "ballot", "parliament", "president",
-        "presidential", "prime", "minister", "government", "cabinet", "diplomat", "diplomatic",
-        "diplomacy", "summit", "sanction", "senate", "congress", "lawmaker", "legislation",
-        "court", "judge", "ruling", "supreme", "kremlin", "trump", "putin", "zelensky",
-        "macron", "netanyahu", "republican", "democrat", "opposition", "coup", "referendum",
-        "treaty", "ambassador", "envoy", "party", "mayor", "governor", "midterm",
-        "brexit", "eu", "governance",
-        "选举", "大选", "投票", "议会", "国会", "总统", "总理", "首相", "政府", "内阁", "外交",
-        "峰会", "制裁", "部长", "法院", "裁决", "政党", "公投", "条约", "大使", "特使", "白宫",
-        "克里姆林宫", "特朗普", "普京", "泽连斯基", "马克龙", "内塔尼亚胡", "欧盟", "联合国",
-        "外长", "会晤", "谈判", "市长", "州长", "中期选举",
+        "presidential", "prime", "minister", "government", "cabinet", "senate", "congress",
+        "lawmaker", "legislation", "court", "judge", "ruling", "supreme", "trump", "putin",
+        "zelensky", "macron", "netanyahu", "republican", "democrat", "opposition", "coup",
+        "referendum", "party", "mayor", "governor", "midterm", "brexit", "eu", "governance",
+        "选举", "大选", "投票", "议会", "国会", "总统", "总理", "首相", "政府", "内阁", "部长",
+        "法院", "裁决", "政党", "公投", "白宫", "特朗普", "普京", "泽连斯基", "马克龙",
+        "内塔尼亚胡", "欧盟", "谈判", "市长", "州长", "中期选举",
     ]),
     ("society", &[
         "protest", "protester", "riot", "rioter", "unrest", "curfew", "loot", "demonstration",
@@ -2187,6 +2209,15 @@ mod tests {
         assert_eq!(section("OpenAI ships a new reasoning model"), "ai");
         assert_eq!(section("Nvidia unveils new GPU for gaming laptops"), "tech");
         assert_eq!(section("Houthi drone attack hits Saudi airport"), "conflict");
+        assert_eq!(
+            section("Iran is reviewing proposals focusing on the nuclear program, officials say"),
+            "conflict"
+        );
+        assert_eq!(
+            section("Polish defence minister calls Krakow shooting an 'act of terror' after 6 killed"),
+            "conflict"
+        );
+        assert_eq!(section("Democrats flip dozens of House seats in midterm election"), "politics");
         assert_eq!(section("Strong earthquake strikes off Japan coast, tsunami warning issued"), "disaster");
         assert_eq!(section("Bitcoin slips 2% as ETF outflows continue"), "crypto");
         assert_eq!(section("New Ebola outbreak confirmed in Congo"), "science");

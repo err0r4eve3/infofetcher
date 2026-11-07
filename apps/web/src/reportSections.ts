@@ -1,9 +1,9 @@
-import { Bitcoin, Building2, ChartNoAxesCombined, Cpu, Flame, FlaskConical, Landmark, Layers3, Palette, ShieldCheck, Sparkles, Swords, Users, type LucideIcon } from 'lucide-react'
+import { Bitcoin, Globe2, Building2, ChartNoAxesCombined, Cpu, Flame, FlaskConical, Landmark, Layers3, Palette, ShieldCheck, Sparkles, Users, type LucideIcon } from 'lucide-react'
 
 // 与后端 world.rs 的 REPORT_SECTIONS 同序同键。
 export const REPORT_SECTIONS = [
-  { key: 'conflict', label: '战争与冲突', icon: Swords },
-  { key: 'politics', label: '政治与外交', icon: Landmark },
+  { key: 'conflict', label: '地缘与安全', icon: Globe2 },
+  { key: 'politics', label: '各国政治', icon: Landmark },
   { key: 'society', label: '社会与民生', icon: Users },
   { key: 'disaster', label: '灾害与事故', icon: Flame },
   { key: 'economy', label: '宏观与市场', icon: ChartNoAxesCombined },

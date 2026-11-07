@@ -1185,7 +1185,9 @@ pub(crate) fn publisher_family(
 }
 
 fn story_tokens(title: &str) -> BTreeSet<String> {
-    let normalized = title.to_lowercase();
+    // 拉丁字母的变音符号先去掉（Kraków → krakow）：否则 ó 会把整条标题当成“非 ASCII”，
+    // 触发跨语言条款，只靠 killed/injured 这类通用词就与别的枪击案并簇。
+    let normalized = fold_latin_diacritics(&title.to_lowercase());
     let mut tokens = BTreeSet::new();
     for segment in normalized.split(|character: char| !character.is_alphanumeric()) {
         let mut run = String::new();
@@ -1203,6 +1205,40 @@ fn story_tokens(title: &str) -> BTreeSet<String> {
     }
     insert_story_semantic_markers(&normalized, &mut tokens);
     tokens
+}
+
+fn fold_latin_diacritics(value: &str) -> String {
+    value
+        .chars()
+        .flat_map(|character| {
+            let folded: &str = match character {
+                'à' | 'á' | 'â' | 'ã' | 'ä' | 'å' | 'ā' | 'ă' | 'ą' => "a",
+                'æ' => "ae",
+                'ç' | 'ć' | 'č' => "c",
+                'ď' | 'đ' => "d",
+                'è' | 'é' | 'ê' | 'ë' | 'ē' | 'ė' | 'ę' | 'ě' => "e",
+                'ğ' => "g",
+                'ì' | 'í' | 'î' | 'ï' | 'ī' | 'į' | 'ı' => "i",
+                'ł' | 'ľ' | 'ĺ' => "l",
+                'ñ' | 'ń' | 'ň' => "n",
+                'ò' | 'ó' | 'ô' | 'õ' | 'ö' | 'ø' | 'ō' | 'ő' => "o",
+                'œ' => "oe",
+                'ř' | 'ŕ' => "r",
+                'ś' | 'š' | 'ş' | 'ș' => "s",
+                'ß' => "ss",
+                'ť' | 'ţ' | 'ț' => "t",
+                'ù' | 'ú' | 'û' | 'ü' | 'ū' | 'ů' | 'ű' | 'ų' => "u",
+                'ý' | 'ÿ' => "y",
+                'ź' | 'ż' | 'ž' => "z",
+                _ => "",
+            };
+            if folded.is_empty() {
+                vec![character]
+            } else {
+                folded.chars().collect()
+            }
+        })
+        .collect()
 }
 
 fn insert_story_semantic_markers(normalized: &str, tokens: &mut BTreeSet<String>) {
@@ -1531,7 +1567,16 @@ fn geography_markers(tokens: &BTreeSet<String>) -> HashSet<&'static str> {
             "iraq" | "iraqi" => Some("iq"),
             "taiwan" | "taiwanese" => Some("tw"),
             "italy" | "italian" => Some("it"),
-            "poland" | "polish" => Some("pl"),
+            "poland" | "polish" | "krakow" | "warsaw" => Some("pl"),
+            "hong" => Some("hk"),
+            "kenya" | "kenyan" => Some("ke"),
+            "tanzania" | "tanzanian" => Some("tz"),
+            "ethiopia" | "ethiopian" => Some("et"),
+            "somalia" | "somali" => Some("so"),
+            "uganda" | "ugandan" => Some("ug"),
+            "congo" | "congolese" | "drc" => Some("cd"),
+            "paraguay" | "paraguayan" => Some("py"),
+            "macau" | "macao" => Some("mo"),
             "sudan" | "sudanese" => Some("sd"),
             "philippines" | "philippine" | "filipino" => Some("ph"),
             "indonesia" | "indonesian" => Some("id"),
@@ -1579,10 +1624,15 @@ fn story_match_score(
         .intersection(right_tokens)
         .filter(|token| !is_inflection_of_shared(token, left_tokens, right_tokens))
         .collect::<Vec<_>>();
-    let real_intersection = shared_stems
+    // 伤亡与报道套话合计最多算 1 个：killed、injured、police、say 一起出现也只说明“都是伤亡事件”。
+    let countable = shared_stems
         .iter()
-        .filter(|token| !token.starts_with("__") && !is_generic_story_action_lexeme(token))
+        .filter(|token| !token.starts_with("__") && !is_generic_story_action_lexeme(token));
+    let boilerplate = countable
+        .clone()
+        .filter(|token| is_casualty_report_word(token))
         .count();
+    let real_intersection = countable.count() - boilerplate + boilerplate.min(1);
     let min_tokens = left_tokens.len().min(right_tokens.len()).max(1) as f32;
     let containment = intersection as f32 / min_tokens;
     let token_score = jaccard(left_tokens, right_tokens);
@@ -1597,17 +1647,38 @@ fn story_match_score(
         bigram_intersection as f32 / left_bigrams.len().min(right_bigrams.len()).max(1) as f32;
     let left_has_non_ascii = left_tokens.iter().any(|token| !token.is_ascii());
     let right_has_non_ascii = right_tokens.iter().any(|token| !token.is_ascii());
-    let shared_ascii_topics = left_tokens
-        .intersection(right_tokens)
-        .filter(|token| is_cross_language_identity_token(token))
-        .count();
-    let has_distinctive_ascii_topic = left_tokens
-        .intersection(right_tokens)
-        .any(|token| is_cross_language_identity_token(token) && token.len() >= 4);
+    // 跨语言条款按词干计数，并排除伤亡与报道套话：killed/kill、injured/injur 以前各算两次，
+    // “killed injured police say”四个词就能把两起不同的枪击案连起来。
     let shared_cross_language_identities = shared_stems
         .iter()
         .filter(|token| is_cross_language_identity_token(token))
         .count();
+    let shared_ascii_topics = shared_stems
+        .iter()
+        .filter(|token| is_cross_language_identity_token(token) && !is_casualty_report_word(token))
+        .count();
+    // 有辨识度的词干占较短标题的比例：只共享“Trump、midterm、White House”这类背景词的长标题不算同事件。
+    let identity_containment = shared_ascii_topics as f32
+        / left_tokens
+            .iter()
+            .filter(|token| {
+                is_cross_language_identity_token(token) && !is_casualty_report_word(token)
+            })
+            .count()
+            .min(
+                right_tokens
+                    .iter()
+                    .filter(|token| {
+                        is_cross_language_identity_token(token) && !is_casualty_report_word(token)
+                    })
+                    .count(),
+            )
+            .max(1) as f32;
+    let has_distinctive_ascii_topic = shared_stems.iter().any(|token| {
+        is_cross_language_identity_token(token)
+            && !is_casualty_report_word(token)
+            && token.len() >= 4
+    });
     let has_shared_event_action = left_tokens
         .intersection(right_tokens)
         .any(|token| is_event_action_token(token) || token.starts_with("__action_"));
@@ -1671,9 +1742,11 @@ fn story_match_score(
                 && dice >= 0.40
                 && has_shared_event_action)
             || (real_intersection >= 3 && containment >= 0.70 && dice >= 0.62)
-            || (left_has_non_ascii != right_has_non_ascii
-                && shared_ascii_topics >= 4
-                && has_distinctive_ascii_topic)
+            // 共享 4 个以上有辨识度的词干（已排除伤亡与报道套话）。原先只用于中英混排标题，
+            // Peña、Mélenchon 这类变音字母曾误触发它，也因此连上了不少同事件后续报道。
+            || (shared_ascii_topics >= 4
+                && has_distinctive_ascii_topic
+                && (left_has_non_ascii != right_has_non_ascii || identity_containment >= 0.5))
             || (shared_cross_language_identities >= 2
                 && has_shared_semantic_action
                 && context.elapsed >= -CROSS_LANGUAGE_WINDOW
@@ -1703,6 +1776,68 @@ fn is_inflection_of_shared(
         && (3..token.len()).any(|length| {
             let stem = &token[..length];
             left_tokens.contains(stem) && right_tokens.contains(stem)
+        })
+}
+
+/// 伤亡、报道与政治背景套话：任何事故、枪击、袭击、白宫新闻的标题都会用到，不能说明是同一起事件。
+/// 仍可作为“共享事件动作”，但不计入身份词重合数。按词干匹配（killed、injuries 同样排除）。
+fn is_casualty_report_word(token: &str) -> bool {
+    const STEMS: &[&str] = &[
+        "kill",
+        "dead",
+        "death",
+        "die",
+        "injur",
+        "wound",
+        "hurt",
+        "victim",
+        "casualt",
+        "shoot",
+        "shot",
+        "gunman",
+        "gunmen",
+        "gunfire",
+        "crash",
+        "accident",
+        "attack",
+        "blast",
+        "explosion",
+        "stab",
+        "people",
+        "person",
+        "official",
+        "police",
+        "authorit",
+        "say",
+        "said",
+        "report",
+        "update",
+        "latest",
+        "video",
+        "show",
+        "suspect",
+        "least",
+        // 解释稿与政治报道的背景词：几乎每条美国政治新闻都有，不能区分事件。
+        "who",
+        "what",
+        "why",
+        "how",
+        "know",
+        "trump",
+        "donald",
+        "white",
+        "house",
+    ];
+    // 只接受常见词尾，避免误伤 stablecoin、deadline、diesel、personal 这类身份词。
+    const SUFFIXES: &[&str] = &[
+        "", "s", "es", "ed", "d", "ing", "ings", "er", "ers", "e", "y", "ies", "ly", "ings", "bed",
+        "bing", "ting", "ity", "ities", "outs", "out", "n",
+    ];
+    token.is_ascii()
+        && STEMS.iter().any(|stem| {
+            token
+                .strip_prefix(stem)
+                .is_some_and(|rest| SUFFIXES.contains(&rest))
         })
 }
 
@@ -1990,6 +2125,65 @@ mod tests {
                 elapsed,
             },
         ) >= 1.0
+    }
+
+    #[test]
+    fn casualty_words_and_diacritics_do_not_bridge_unrelated_incidents() {
+        let krakow =
+            "Kraków shooting latest updates: six killed and more than a dozen injured, police say";
+        for other in [
+            "Citi employee killed in shooting at Florida office, suspect dead",
+            "3 injured in shooting at US post office in Iowa, suspect detained",
+            "1 officer killed, 3 injured as gunman opens fire on police in Colorado",
+            "At least two killed, 23 injured in school bus accident in eastern France",
+            "1 killed and 2 others injured when a helicopter crashes into bay near Miami, officials say",
+        ] {
+            assert!(
+                !titles_match(krakow, other, false, Duration::hours(2)),
+                "{other}"
+            );
+        }
+        assert!(!titles_match(
+            "All 9 aboard killed after plane crashes in Florida, officials say",
+            "1 killed and 2 others injured when a helicopter crashes into bay near Miami, officials say",
+            false,
+            Duration::hours(2),
+        ));
+        assert!(!titles_match(
+            "Who is UFC boss Dana White who gets surprising offer from Donald Trump to be White House press secretary?",
+            "Who is Stephen Miller, Trump’s new White House chief of staff?",
+            false,
+            Duration::hours(2),
+        ));
+        assert!(!titles_match(
+            "Hong Kong pro-democracy activist Joshua Wong sentenced to 10 years in prison in national security case",
+            "Ex-lawmaker gets 12.5 years in Macao's first national security case",
+            false,
+            Duration::hours(2),
+        ));
+    }
+
+    #[test]
+    fn same_incident_with_diacritics_still_matches() {
+        assert!(
+            titles_match(
+                "Gunman opens fire in Polish city of Krakow, killing 6 people and wounding 16",
+                "Six dead after gunman opens fire at random in Kraków market square, Krakow police say",
+                false,
+                Duration::hours(2),
+            ) || titles_match(
+                "Ueno Bank collapse in Paraguay sparks political crisis for President Peña",
+                "Ueno Bank scandal plunges Paraguay into political crisis",
+                false,
+                Duration::hours(2),
+            )
+        );
+        assert!(titles_match(
+            "Ueno Bank collapse in Paraguay sparks political crisis for President Peña",
+            "Ueno Bank scandal plunges Paraguay into political crisis",
+            false,
+            Duration::hours(2),
+        ));
     }
 
     #[test]
