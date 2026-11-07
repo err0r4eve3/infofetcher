@@ -13,6 +13,8 @@ use crate::{
 const STORY_ASSIGNMENT_LOCK_KEY: i64 = 0x5253_5354_4f52_5901;
 const STORY_WINDOW: Duration = Duration::days(4);
 const SAME_SOURCE_WINDOW: Duration = Duration::hours(12);
+/// 新文章同时命中多个簇时，最多这么多篇的簇才整簇并入最佳簇。
+const MAX_ABSORBED_STORY_ARTICLES: i64 = 3;
 const CROSS_LANGUAGE_WINDOW: Duration = Duration::hours(12);
 const MAX_APPROXIMATE_CANDIDATES: usize = 2_000;
 
@@ -546,10 +548,27 @@ async fn assign_story_cluster_with_preference(
     };
 
     if !is_new_story {
-        let merged_story_ids = exact_matches
+        // 只把同时命中的小簇（碎片）并进最佳簇。以前命中几个簇就整簇合并，一篇“中期选举与伊朗战争”
+        // 能把两个大簇连起来，11-08 回放 7 天文章最大簇 443 篇、混入 47 篇伊朗战争报道；
+        // 只并 ≤3 篇的簇后最大簇 229 篇、混入 2 篇，重点事件的簇大小与原来一致。
+        let other_ids = exact_matches
             .into_iter()
             .filter(|candidate_id| *candidate_id != story_id)
             .collect::<Vec<_>>();
+        let merged_story_ids = if other_ids.is_empty() {
+            other_ids
+        } else {
+            sqlx::query_scalar::<_, Uuid>(
+                "SELECT story_id FROM articles
+                 WHERE story_id = ANY($1)
+                 GROUP BY story_id
+                 HAVING count(*) <= $2",
+            )
+            .bind(&other_ids)
+            .bind(MAX_ABSORBED_STORY_ARTICLES)
+            .fetch_all(&mut *transaction)
+            .await?
+        };
         merge_story_clusters(&mut transaction, story_id, &merged_story_ids).await?;
     }
 
