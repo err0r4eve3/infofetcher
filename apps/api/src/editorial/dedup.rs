@@ -20,7 +20,7 @@ use uuid::Uuid;
 use crate::{
     error::{AppError, AppResult},
     intelligence,
-    llm::call_structured,
+    llm::{self, SameEventCandidate, call_structured},
     state::AppState,
     world::{self, EventBriefItem},
 };
@@ -89,8 +89,42 @@ pub async fn run_turn(state: &AppState) -> AppResult<usize> {
     let mut merged = 0;
     for (winner, losers) in plan_merges(&items, &decision.duplicates) {
         for loser in losers {
+            // 整份列表一次分组时，模型会把无关条目编进同一组（2026-11-13 “微软 365 故障”
+            // 被并进“乌克兰和谈”，之后滚成 940 篇的跨话题巨簇）。每一对再按逐对同事件口径复核。
+            let confirmed = {
+                let _permit = state
+                    .llm_semaphore
+                    .acquire()
+                    .await
+                    .map_err(|error| AppError::Anyhow(error.into()))?;
+                llm::match_same_event_with_llm(
+                    &state.config,
+                    &state.http,
+                    &pair_candidate(loser, "report"),
+                    &[pair_candidate(winner, "c1")],
+                )
+                .await
+            };
+            match confirmed {
+                Ok(Some(_)) => {}
+                Ok(None) => {
+                    record(state, winner, loser, "rejected").await?;
+                    tracing::info!(
+                        winner = %winner.event_id, rejected = %loser.event_id,
+                        winner_title = %winner.title, rejected_title = %loser.title,
+                        "brief duplicate rejected by pairwise check"
+                    );
+                    continue;
+                }
+                Err(error) if matches!(error, AppError::Reqwest(_)) => return Err(error),
+                Err(error) => {
+                    tracing::warn!(winner = %winner.event_id, loser = %loser.event_id, %error,
+                        "brief duplicate pairwise check failed");
+                    continue;
+                }
+            }
             if intelligence::merge_confirmed_stories(state, winner.event_id, loser.event_id).await? {
-                record(state, winner, loser).await?;
+                record(state, winner, loser, "linked").await?;
                 merged += 1;
                 tracing::info!(
                     winner = %winner.event_id, merged = %loser.event_id,
@@ -127,6 +161,22 @@ fn prompt_items(items: &[EventBriefItem]) -> Vec<Value> {
             })
         })
         .collect()
+}
+
+/// 逐对复核用的条目：标题加评审摘要，摘要能暴露代表标题和簇内容不一致的情况。
+fn pair_candidate(item: &EventBriefItem, id: &str) -> SameEventCandidate {
+    let summary = item.what_happened.chars().take(SUMMARY_CHARS).collect::<String>();
+    let title = if summary.trim().is_empty() {
+        item.title.clone()
+    } else {
+        format!("{} ｜ {}", item.title, summary.trim())
+    };
+    SameEventCandidate {
+        id: id.to_string(),
+        title,
+        source: item.source_titles.first().cloned().unwrap_or_default(),
+        published_at: Some(item.published_at),
+    }
 }
 
 fn item_key(index: usize) -> String {
@@ -196,16 +246,22 @@ fn selection_fingerprint(items: &[EventBriefItem]) -> u64 {
 }
 
 /// 合并记录写进 story_link_decisions，与簇向量合并共用审计和回放口径。
-async fn record(state: &AppState, winner: &EventBriefItem, loser: &EventBriefItem) -> AppResult<()> {
+async fn record(
+    state: &AppState,
+    winner: &EventBriefItem,
+    loser: &EventBriefItem,
+    verdict: &str,
+) -> AppResult<()> {
     sqlx::query(
         "INSERT INTO story_link_decisions
            (article_id, candidate_article_id, candidate_story_id, cosine,
             cross_language, verdict, model)
-         VALUES ($1, $2, $3, 0, false, 'linked', $4)",
+         VALUES ($1, $2, $3, 0, false, $4, $5)",
     )
     .bind(loser.representative_article_id)
     .bind(winner.representative_article_id)
     .bind(winner.event_id)
+    .bind(verdict)
     .bind(format!("{}:brief", state.config.llm_model))
     .execute(&state.pool)
     .await?;
